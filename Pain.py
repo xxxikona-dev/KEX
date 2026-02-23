@@ -21,7 +21,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONT_PATH = os.path.join(BASE_DIR, "fonts", "font.ttf")
 
-# --- ТВОЯ КОНФИГУРАЦИЯ (X, Y - ЦЕНТР) ---
+# --- ТВОЯ КОНФИГУРАЦИЯ ---
 FIELDS_CONFIG = [
     {"coord": (660, 750), "size": 24, "rotate": -0.3, "color": (40, 42, 55)},   # 1. Фамилия
     {"coord": (660, 845), "size": 24, "rotate": -0.3, "color": (40, 42, 55)},   # 2. Имя
@@ -44,30 +44,37 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
 
-# --- ФУНКЦИИ ОТРИСОВКИ ---
+# --- ФУНКЦИИ ОТРИСОВКИ С ПРОЗРАЧНОСТЬЮ ---
 
 def draw_centered_text(img, text, font, config):
-    text = str(text).upper() # Принудительный КАПС
+    text = str(text).upper()
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # Создаем холст для текста с запасом для поворота
+    # Создаем холст для текста
     txt_layer = Image.new("RGBA", (tw + 150, th + 150), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    # Рисуем по центру слоя (mm - middle middle)
-    d.text(((tw + 150) // 2, (th + 150) // 2), text, font=font, fill=config["color"], anchor="mm")
+    # Добавляем прозрачность к цвету (Alpha = 230)
+    fill_color = config["color"] + (230,) 
+    
+    d.text(((tw + 150) // 2, (th + 150) // 2), text, font=font, fill=fill_color, anchor="mm")
     
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
     
+    # Смягчаем края букв, чтобы не выглядели как наклейка
+    txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=0.2))
+
     lw, lh = txt_layer.size
-    offset_x = config["coord"][0] - (lw // 2)
-    offset_y = config["coord"][1] - (lh // 2)
-    img.paste(txt_layer, (int(offset_x), int(offset_y)), txt_layer)
+    offset_x = int(config["coord"][0] - (lw // 2))
+    offset_y = int(config["coord"][1] - (lh // 2))
+    
+    # Используем alpha_composite для корректного смешивания слоев
+    img.alpha_composite(txt_layer, (offset_x, offset_y))
 
 def draw_multi_line_centered(img, text, font, config):
-    text = str(text).upper() # Принудительный КАПС
+    text = str(text).upper()
     chars_limit = config.get("width", 30)
     lines = textwrap.wrap(text, width=chars_limit)[:3]
     
@@ -76,7 +83,6 @@ def draw_multi_line_centered(img, text, font, config):
 
     for i, line in enumerate(lines):
         line_cfg = config.copy()
-        # Каждая строка чуть ниже предыдущей
         line_cfg["coord"] = (base_x, base_y + (i * line_step))
         draw_centered_text(img, line, font, line_cfg)
 
@@ -136,7 +142,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
 async def process(message: types.Message, state: FSMContext):
     user_lines = [l.strip() for l in message.text.split('\n') if l.strip()]
     if len(user_lines) < 10: 
-        return await message.answer(f"Ошибка! Вы прислали {len(user_lines)} строк, а нужно 10.")
+        return await message.answer(f"Ошибка! Нужно 10 строк.")
     
     data = await state.get_data()
     await message.answer("⌛ Генерирую документ...")
@@ -149,19 +155,17 @@ async def process(message: types.Message, state: FSMContext):
                 try: font = ImageFont.truetype(FONT_PATH, cfg["size"])
                 except: font = ImageFont.load_default()
                 
-                # Поля с переносом строк (Место рожд. и Кем выдан)
                 if i in [4, 6]:
                     draw_multi_line_centered(img, user_lines[i], font, cfg)
                 else:
                     draw_centered_text(img, user_lines[i], font, cfg)
                 
-                # Спецусловие для серии и номера (дублирование на верх)
                 if i == 9:
                     draw_centered_text(img, user_lines[i], font, FIELDS_CONFIG[10])
 
-            # Эффекты
+            # Финальная склейка и легкий блюр всей сцены
             res = img.convert("RGB")
-            res = res.filter(ImageFilter.GaussianBlur(radius=0.3)) 
+            res = res.filter(ImageFilter.GaussianBlur(radius=0.25)) 
             
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
@@ -170,7 +174,7 @@ async def process(message: types.Message, state: FSMContext):
             await state.clear()
     except Exception as e:
         logging.error(e)
-        await message.answer(f"Произошла ошибка при обработке: {e}")
+        await message.answer(f"Ошибка: {e}")
 
 async def main():
     await dp.start_polling(bot)
