@@ -23,15 +23,15 @@ FONT_PATH = os.path.join(BASE_DIR, "fonts", "font.ttf")
 
 # --- ТВОЯ ОБНОВЛЕННАЯ КОНФИГУРАЦИЯ ---
 FIELDS_CONFIG = [
-    {"coord": (660, 753), "size": 24, "rotate": 0.3, "color": (40, 42, 55)},   # 1. Фамилия
-    {"coord": (660, 840), "size": 24, "rotate": 0.3, "color": (40, 42, 55)},   # 2. Имя
-    {"coord": (660, 874), "size": 24, "rotate": 0.3, "color": (40, 42, 55)},   # 3. Отчество
-    {"coord": (710, 914), "size": 24, "rotate": 0.5, "color": (35, 38, 50)},   # 4. Дата рожд.
-    {"coord": (660, 960), "size": 24, "rotate": 0, "color": (40, 42, 55), "width": 25, "spacing": 12, "lines": 2}, # 5. Место рожд.
-    {"coord": (500, 920), "size": 24, "rotate": 0.2, "color": (35, 38, 50)},   # 6. Пол
-    {"coord": (535, 371), "size": 24, "rotate": 0, "color": (45, 45, 60), "width": 45, "spacing": 12, "lines": 3}, # 7. Кем выдан
-    {"coord": (357, 437), "size": 24, "rotate": -0.5, "color": (40, 40, 55)},   # 8. Дата выд.
-    {"coord": (710, 430), "size": 24, "rotate": -0.2, "color": (40, 42, 55)},  # 9. Код подр.
+    {"coord": (660, 754), "size": 24, "rotate": 0.5, "color": (40, 42, 55)},   # 1. Фамилия
+    {"coord": (660, 839), "size": 24, "rotate": 0.5, "color": (40, 42, 55)},   # 2. Имя
+    {"coord": (660, 877), "size": 24, "rotate": 0.5, "color": (40, 42, 55)},   # 3. Отчество
+    {"coord": (710, 916), "size": 24, "rotate": 0.5, "color": (35, 38, 50)},   # 4. Дата рожд.
+    {"coord": (660, 962.5), "size": 24, "rotate": 0, "color": (40, 42, 55), "width": 25, "spacing": 12, "lines": 3}, # 5. Место рожд. (ИСПРАВЛЕНО ДО 3)
+    {"coord": (500, 922), "size": 24, "rotate": 0.2, "color": (35, 38, 50)},   # 6. Пол
+    {"coord": (535, 374), "size": 24, "rotate": 0, "color": (45, 45, 60), "width": 45, "spacing": 12, "lines": 3}, # 7. Кем выдан (3 СТРОКИ)
+    {"coord": (357, 438), "size": 24, "rotate": -0.5, "color": (40, 40, 55)},   # 8. Дата выд.
+    {"coord": (710, 434), "size": 24, "rotate": -0.2, "color": (40, 42, 55)},  # 9. Код подр.
     {"coord": (870, 880), "size": 28, "rotate": -91.0, "color": (150, 30, 30)}, # 10. Номер (НИЖНИЙ)
     {"coord": (860, 455), "size": 28, "rotate": -89.0, "color": (140, 30, 30)}    # 11. Номер (ВЕРХНИЙ)
 ]
@@ -51,20 +51,16 @@ def draw_centered_text(img, text, font, config):
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # Слой для текста
     txt_layer = Image.new("RGBA", (tw + 150, th + 150), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    # Настройка прозрачности
     fill_color = config["color"] + (230,) 
     d.text(((tw + 150) // 2, (th + 150) // 2), text, font=font, fill=fill_color, anchor="mm")
     
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
     
-    # Мягкое размытие краев
     txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=0.2))
-
     lw, lh = txt_layer.size
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
@@ -74,17 +70,15 @@ def draw_centered_text(img, text, font, config):
 def draw_multi_line_centered(img, text, font, config):
     text = str(text).upper()
     chars_limit = config.get("width", 30)
-    max_lines = config.get("lines", 2)
+    max_lines = config.get("lines", 3) # Теперь по умолчанию до 3 строк
     
     lines = textwrap.wrap(text, width=chars_limit)[:max_lines]
     
     base_x, base_y = config["coord"]
-    # Расстояние между базовыми линиями строк
-    line_step = config["size"] + config.get("spacing", 8) 
+    line_step = config["size"] + config.get("spacing", 10) 
 
     for i, line in enumerate(lines):
         line_cfg = config.copy()
-        # Смещаем каждую следующую строку вниз
         line_cfg["coord"] = (base_x, base_y + (i * line_step))
         draw_centered_text(img, line, font, line_cfg)
 
@@ -119,9 +113,9 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
             "ИВАН\n"
             "ИВАНОВИЧ\n"
             "01.01.1990\n"
-            "ГОР. МОСКВА\n"
+            "ГОР. МОСКВА, ПР-Т ЛЕНИНА, Д. 1, КВ. 5\n"
             "МУЖ.\n"
-            "УВД ПО ГОР. МОСКВЕ ПО РАЙОНУ АРБАТ\n"
+            "ОТДЕЛОМ ВНУТРЕННИХ ДЕЛ ОКТЯБРЬСКОГО ОКРУГА ГОРОДА АРХАНГЕЛЬСКА\n"
             "10.10.2010\n"
             "770-001\n"
             "45 10 123456"
