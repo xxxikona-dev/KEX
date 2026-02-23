@@ -21,20 +21,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONT_PATH = os.path.join(BASE_DIR, "fonts", "font.ttf")
 
-# --- КОНФИГУРАЦИЯ ---
-# (X, Y, Размер, Поворот, Цвет)
+# --- ТВОЯ КОНФИГУРАЦИЯ (X, Y - ЦЕНТР) ---
 FIELDS_CONFIG = [
-    {"coord": (485, 485), "size": 30, "rotate": -1.2, "color": (40, 42, 55)},   # 1. Фамилия
-    {"coord": (485, 550), "size": 30, "rotate": -1.2, "color": (40, 42, 55)},   # 2. Имя (ПОДНЯТО)
-    {"coord": (485, 595), "size": 30, "rotate": -1.2, "color": (40, 42, 55)},   # 3. Отчество
-    {"coord": (585, 635), "size": 28, "rotate": -1.0, "color": (35, 38, 50)},   # 4. Дата рожд.
-    {"coord": (485, 685), "size": 21, "rotate": -1.0, "color": (40, 42, 55), "width": 28}, # 5. Место рожд.
-    {"coord": (410, 640), "size": 28, "rotate": -1.0, "color": (35, 38, 50)},   # 6. Пол
-    {"coord": (270, 185), "size": 23, "rotate": -1.5, "color": (45, 45, 60), "width": 45}, # 7. Кем выдан (ВЫШЕ)
-    {"coord": (260, 315), "size": 27, "rotate": -1.3, "color": (40, 40, 55)},   # 8. Дата выд.
-    {"coord": (580, 312), "size": 28, "rotate": -1.3, "color": (40, 40, 55)},   # 9. Код подр.
-    {"coord": (820, 640), "size": 40, "rotate": -90.5, "color": (150, 30, 30)}, # 10. Номер НИЗ
-    {"coord": (740, 305), "size": 36, "rotate": -1.5, "color": (140, 30, 30)}   # 11. Номер ВЕРХ (ПОВЕРНУТ)
+    {"coord": (660, 485), "size": 30, "rotate": -0.5, "color": (40, 42, 55)},   # 1. Фамилия
+    {"coord": (660, 560), "size": 30, "rotate": -0.5, "color": (40, 42, 55)},   # 2. Имя
+    {"coord": (660, 595), "size": 30, "rotate": -0.5, "color": (40, 42, 55)},   # 3. Отчество
+    {"coord": (710, 638), "size": 28, "rotate": -0.5, "color": (35, 38, 50)},   # 4. Дата рожд.
+    {"coord": (660, 680), "size": 22, "rotate": -0.5, "color": (40, 42, 55), "width": 25}, # 5. Место рожд.
+    {"coord": (490, 642), "size": 28, "rotate": -0.5, "color": (35, 38, 50)},   # 6. Пол
+    {"coord": (546, 245), "size": 24, "rotate": -0.8, "color": (45, 45, 60), "width": 38}, # 7. Кем выдан
+    {"coord": (357, 325), "size": 28, "rotate": -0.8, "color": (40, 40, 55)},   # 8. Дата выд.
+    {"coord": (710, 315), "size": 30, "rotate": -0.8, "color": (40, 40, 55)},   # 9. Код подр.
+    {"coord": (870, 660), "size": 42, "rotate": -90.0, "color": (150, 30, 30)}, # 10. Номер НИЗ
+    {"coord": (860, 315), "size": 38, "rotate": 0, "color": (140, 30, 30)}      # 11. Номер ВЕРХ
 ]
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -45,27 +44,37 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
 
-def draw_simple_text(img, text, font, config):
-    """Обычная отрисовка без сложного центрирования"""
+# --- ФУНКЦИИ ОТРИСОВКИ ---
+
+def draw_centered_text(img, text, font, config):
+    text = text.upper() # Принудительный КАПС
     bbox = font.getbbox(text)
-    tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-    txt_layer = Image.new("RGBA", (tw + 100, th + 100), (0, 0, 0, 0))
-    ImageDraw.Draw(txt_layer).text((50, 50), text, font=font, fill=config["color"])
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    txt_layer = Image.new("RGBA", (tw + 120, th + 120), (0, 0, 0, 0))
+    d = ImageDraw.Draw(txt_layer)
+    d.text(((tw + 120) // 2, (th + 120) // 2), text, font=font, fill=config["color"], anchor="mm")
     
-    if config["rotate"] != 0:
+    if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
     
-    img.paste(txt_layer, (int(config["coord"][0]), int(config["coord"][1])), txt_layer)
+    lw, lh = txt_layer.size
+    offset_x = config["coord"][0] - (lw // 2)
+    offset_y = config["coord"][1] - (lh // 2)
+    img.paste(txt_layer, (int(offset_x), int(offset_y)), txt_layer)
 
-def draw_multi_line(img, text, font, config):
-    """Деление на строки для 'Кем выдан' и 'Место рождения'"""
-    lines = textwrap.wrap(text, width=config.get("width", 30))[:3]
-    curr_x, curr_y = config["coord"]
-    
+def draw_multi_line_centered(img, text, font, config):
+    text = text.upper() # Принудительный КАПС
+    chars_limit = config.get("width", 30)
+    lines = textwrap.wrap(text, width=chars_limit)[:3]
+    base_x, base_y = config["coord"]
+    line_step = config["size"] + 6 
+
     for i, line in enumerate(lines):
         line_cfg = config.copy()
-        line_cfg["coord"] = (curr_x, curr_y + (i * (config["size"] + 6)))
-        draw_simple_text(img, line, font, line_cfg)
+        line_cfg["coord"] = (base_x, base_y + (i * line_step))
+        draw_centered_text(img, line, font, line_cfg)
+
+# --- ЛОГИКА БОТА ---
 
 @dp.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
@@ -76,7 +85,7 @@ async def start(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
         InlineKeyboardButton(text="➡️", callback_data="n_0")
     ]])
-    await message.answer_photo(FSInputFile(os.path.join(TEMPLATES_DIR, tpls[0])), caption=f"Выбор: {tpls[0]}", reply_markup=kb)
+    await message.answer_photo(FSInputFile(os.path.join(TEMPLATES_DIR, tpls[0])), caption=f"Выбор шаблона: {tpls[0]}", reply_markup=kb)
     await state.set_state(Form.browsing_templates)
 
 @dp.callback_query(F.data.startswith(("p_", "n_", "s_")))
@@ -86,7 +95,22 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     idx = int(idx)
     if act == "s":
         await state.update_data(tpl=tpls[idx])
-        await call.message.answer("Пришли 10 строк данных.")
+        # ТЕКСТ С ПРИМЕРОМ В ЦИТАТЕ
+        example_text = (
+            "Отправь данные 10 строками (каждая с новой строки):\n\n"
+            "> ИВАНОВ\n"
+            "> ИВАН\n"
+            "> ИВАНОВИЧ\n"
+            "> 01.01.1990\n"
+            "> ГОР. МОСКВА\n"
+            "> МУЖ.\n"
+            "> УВД ПО ГОР. МОСКВЕ ПО РАЙОНУ АРБАТ\n"
+            "> 10.10.2010\n"
+            "> 770-001\n"
+            "> 45 10 123456\n\n"
+            "Бот сам переведет текст в ЗАГЛАВНЫЕ БУКВЫ."
+        )
+        await call.message.answer(example_text, parse_mode="MarkdownV2" if ">" in example_text else None)
         await state.set_state(Form.inputting_data)
     else:
         new_idx = (idx - 1) % len(tpls) if act == "p" else (idx + 1) % len(tpls)
@@ -99,7 +123,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
 @dp.message(Form.inputting_data)
 async def process(message: types.Message, state: FSMContext):
     user_lines = [l.strip() for l in message.text.split('\n') if l.strip()]
-    if len(user_lines) < 10: return await message.answer(f"Нужно 10 строк!")
+    if len(user_lines) < 10: return await message.answer(f"Ошибка! Нужно ровно 10 строк данных.")
     
     data = await state.get_data()
     try:
@@ -111,22 +135,22 @@ async def process(message: types.Message, state: FSMContext):
                 except: font = ImageFont.load_default()
                 
                 if i in [4, 6]:
-                    draw_multi_line(img, user_lines[i], font, cfg)
+                    draw_multi_line_centered(img, user_lines[i], font, cfg)
                 else:
-                    draw_simple_text(img, user_lines[i], font, cfg)
+                    draw_centered_text(img, user_lines[i], font, cfg)
                 
-                if i == 9: # Дубликат наверх
-                    draw_simple_text(img, user_lines[i], font, FIELDS_CONFIG[10])
+                if i == 9: # Дублируем серию/номер на верхнюю страницу
+                    draw_centered_text(img, user_lines[i], font, FIELDS_CONFIG[10])
 
             res = img.convert("RGB")
             res = res.filter(ImageFilter.GaussianBlur(radius=0.3)) 
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
             buf.seek(0)
-            await message.answer_photo(BufferedInputFile(buf.read(), filename="res.jpg"))
+            await message.answer_photo(BufferedInputFile(buf.read(), filename="passport_result.jpg"), caption="Готово!")
             await state.clear()
     except Exception as e:
-        await message.answer(f"Ошибка: {e}")
+        await message.answer(f"Произошла ошибка: {e}")
 
 async def main():
     await dp.start_polling(bot)
