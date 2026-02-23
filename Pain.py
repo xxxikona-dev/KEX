@@ -33,7 +33,7 @@ FIELDS_CONFIG = [
     {"coord": (357, 438), "size": 24, "rotate": -0.5, "color": (40, 40, 55)},   # 8. Дата выд.
     {"coord": (710, 434), "size": 24, "rotate": -0.2, "color": (40, 42, 55)},  # 9. Код подр.
     {"coord": (870, 880), "size": 28, "rotate": -91.0, "color": (150, 30, 30)}, # 10. Номер (НИЖНИЙ)
-    {"coord": (860, 455), "size": 28, "rotate": -89.0, "color": (140, 30, 30)}    # 11. Номер (ВЕРХНИЙ)
+    {"coord": (860, 455), "size": 28, "rotate": -87.0, "color": (140, 30, 30)}    # 11. Номер (ВЕРХНИЙ)
 ]
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
