@@ -14,7 +14,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from dotenv import load_dotenv
 
-# --- НАСТРОЙКИ ---
+# --- НАСТРОЙКИ ПУТЕЙ ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -47,12 +47,16 @@ class Form(StatesGroup):
 # --- ФУНКЦИИ ОТРИСОВКИ ---
 
 def draw_centered_text(img, text, font, config):
-    text = text.upper() # Принудительный КАПС
+    text = str(text).upper() # Принудительный КАПС
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    txt_layer = Image.new("RGBA", (tw + 120, th + 120), (0, 0, 0, 0))
+    
+    # Создаем холст для текста с запасом для поворота
+    txt_layer = Image.new("RGBA", (tw + 150, th + 150), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
-    d.text(((tw + 120) // 2, (th + 120) // 2), text, font=font, fill=config["color"], anchor="mm")
+    
+    # Рисуем по центру слоя (mm - middle middle)
+    d.text(((tw + 150) // 2, (th + 150) // 2), text, font=font, fill=config["color"], anchor="mm")
     
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
@@ -63,29 +67,33 @@ def draw_centered_text(img, text, font, config):
     img.paste(txt_layer, (int(offset_x), int(offset_y)), txt_layer)
 
 def draw_multi_line_centered(img, text, font, config):
-    text = text.upper() # Принудительный КАПС
+    text = str(text).upper() # Принудительный КАПС
     chars_limit = config.get("width", 30)
     lines = textwrap.wrap(text, width=chars_limit)[:3]
+    
     base_x, base_y = config["coord"]
     line_step = config["size"] + 6 
 
     for i, line in enumerate(lines):
         line_cfg = config.copy()
+        # Каждая строка чуть ниже предыдущей
         line_cfg["coord"] = (base_x, base_y + (i * line_step))
         draw_centered_text(img, line, font, line_cfg)
 
-# --- ЛОГИКА БОТА ---
+# --- ХЕНДЛЕРЫ ---
 
 @dp.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
     tpls = sorted([f for f in os.listdir(TEMPLATES_DIR) if f.lower().endswith(('.jpg', '.jpeg'))])
-    if not tpls: return await message.answer("Папка templates пуста!")
+    if not tpls: return await message.answer("Папка 'templates' пуста!")
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⬅️", callback_data="p_0"),
         InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
         InlineKeyboardButton(text="➡️", callback_data="n_0")
     ]])
-    await message.answer_photo(FSInputFile(os.path.join(TEMPLATES_DIR, tpls[0])), caption=f"Выбор шаблона: {tpls[0]}", reply_markup=kb)
+    await message.answer_photo(FSInputFile(os.path.join(TEMPLATES_DIR, tpls[0])), 
+                               caption=f"Выбор шаблона: {tpls[0]}", reply_markup=kb)
     await state.set_state(Form.browsing_templates)
 
 @dp.callback_query(F.data.startswith(("p_", "n_", "s_")))
@@ -93,39 +101,46 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     tpls = sorted([f for f in os.listdir(TEMPLATES_DIR) if f.lower().endswith(('.jpg', '.jpeg'))])
     act, idx = call.data.split("_")
     idx = int(idx)
+    
     if act == "s":
         await state.update_data(tpl=tpls[idx])
-        # ТЕКСТ С ПРИМЕРОМ В ЦИТАТЕ
         example_text = (
             "Отправь данные 10 строками (каждая с новой строки):\n\n"
-            "> ИВАНОВ\n"
-            "> ИВАН\n"
-            "> ИВАНОВИЧ\n"
-            "> 01.01.1990\n"
-            "> ГОР. МОСКВА\n"
-            "> МУЖ.\n"
-            "> УВД ПО ГОР. МОСКВЕ ПО РАЙОНУ АРБАТ\n"
-            "> 10.10.2010\n"
-            "> 770-001\n"
-            "> 45 10 123456\n\n"
-            "Бот сам переведет текст в ЗАГЛАВНЫЕ БУКВЫ."
+            "<blockquote>"
+            "ИВАНОВ\n"
+            "ИВАН\n"
+            "ИВАНОВИЧ\n"
+            "01.01.1990\n"
+            "ГОР. МОСКВА\n"
+            "МУЖ.\n"
+            "УВД ПО ГОР. МОСКВЕ ПО РАЙОНУ АРБАТ\n"
+            "10.10.2010\n"
+            "770-001\n"
+            "45 10 123456"
+            "</blockquote>\n\n"
+            "Бот сам переведет текст в <b>ЗАГЛАВНЫЕ БУКВЫ</b>."
         )
-        await call.message.answer(example_text, parse_mode="MarkdownV2" if ">" in example_text else None)
+        await call.message.answer(example_text, parse_mode="HTML")
         await state.set_state(Form.inputting_data)
     else:
         new_idx = (idx - 1) % len(tpls) if act == "p" else (idx + 1) % len(tpls)
-        await call.message.edit_media(InputMediaPhoto(media=FSInputFile(os.path.join(TEMPLATES_DIR, tpls[new_idx])), caption=f"Выбор: {tpls[new_idx]}"), 
+        await call.message.edit_media(InputMediaPhoto(media=FSInputFile(os.path.join(TEMPLATES_DIR, tpls[new_idx])), 
+                                                      caption=f"Выбор: {tpls[new_idx]}"), 
                                       reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                                           InlineKeyboardButton(text="⬅️", callback_data=f"p_{new_idx}"),
                                           InlineKeyboardButton(text="✅ Выбрать", callback_data=f"s_{new_idx}"),
                                           InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")]]))
+    await call.answer()
 
 @dp.message(Form.inputting_data)
 async def process(message: types.Message, state: FSMContext):
     user_lines = [l.strip() for l in message.text.split('\n') if l.strip()]
-    if len(user_lines) < 10: return await message.answer(f"Ошибка! Нужно ровно 10 строк данных.")
+    if len(user_lines) < 10: 
+        return await message.answer(f"Ошибка! Вы прислали {len(user_lines)} строк, а нужно 10.")
     
     data = await state.get_data()
+    await message.answer("⌛ Генерирую документ...")
+
     try:
         with Image.open(os.path.join(TEMPLATES_DIR, data['tpl'])) as img:
             img = img.convert("RGBA")
@@ -134,23 +149,28 @@ async def process(message: types.Message, state: FSMContext):
                 try: font = ImageFont.truetype(FONT_PATH, cfg["size"])
                 except: font = ImageFont.load_default()
                 
+                # Поля с переносом строк (Место рожд. и Кем выдан)
                 if i in [4, 6]:
                     draw_multi_line_centered(img, user_lines[i], font, cfg)
                 else:
                     draw_centered_text(img, user_lines[i], font, cfg)
                 
-                if i == 9: # Дублируем серию/номер на верхнюю страницу
+                # Спецусловие для серии и номера (дублирование на верх)
+                if i == 9:
                     draw_centered_text(img, user_lines[i], font, FIELDS_CONFIG[10])
 
+            # Эффекты
             res = img.convert("RGB")
             res = res.filter(ImageFilter.GaussianBlur(radius=0.3)) 
+            
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
             buf.seek(0)
-            await message.answer_photo(BufferedInputFile(buf.read(), filename="passport_result.jpg"), caption="Готово!")
+            await message.answer_photo(BufferedInputFile(buf.read(), filename="ready.jpg"), caption="Ваш документ готов!")
             await state.clear()
     except Exception as e:
-        await message.answer(f"Произошла ошибка: {e}")
+        logging.error(e)
+        await message.answer(f"Произошла ошибка при обработке: {e}")
 
 async def main():
     await dp.start_polling(bot)
