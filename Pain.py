@@ -14,28 +14,27 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from dotenv import load_dotenv
 
-# --- НАСТРОЙКИ ПУТЕЙ ---
+# --- НАСТРОЙКИ ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONT_PATH = os.path.join(BASE_DIR, "fonts", "font.ttf")
 
-# --- КОНФИГУРАЦИЯ ПОЛЕЙ ---
-# Координаты настроены под фото 1.jpg
-# (X, Y, Размер, Поворот, Цвет RGB, Ширина для переноса)
+# --- ТВОИ КООРДИНАТЫ (X, Y - ЦЕНТР СТРОКИ) ---
+# Цвет (45, 47, 60) — реалистичный антрацит
 FIELDS_CONFIG = [
-    {"coord": (475, 532), "size": 27, "rotate": -1.5, "color": (40, 42, 55)},   # 1. Фамилия
-    {"coord": (475, 575), "size": 27, "rotate": -1.5, "color": (40, 42, 55)},   # 2. Имя
-    {"coord": (475, 615), "size": 27, "rotate": -1.5, "color": (40, 42, 55)},   # 3. Отчество
-    {"coord": (585, 642), "size": 25, "rotate": -1.2, "color": (35, 38, 50)},   # 4. Дата рожд.
-    {"coord": (615, 695), "size": 21, "rotate": -1.0, "color": (40, 42, 55), "width": 28}, # 5. Место рожд. (ЦЕНТР)
-    {"coord": (485, 642), "size": 25, "rotate": -1.2, "color": (35, 38, 50)},   # 6. Пол
-    {"coord": (480, 165), "size": 23, "rotate": -1.8, "color": (45, 45, 60), "width": 40}, # 7. Кем выдан (ЦЕНТР)
-    {"coord": (315, 292), "size": 25, "rotate": -1.5, "color": (40, 40, 55)},   # 8. Дата выд.
-    {"coord": (565, 318), "size": 26, "rotate": -1.5, "color": (30, 45, 110)},  # 9. Код подр. (синий)
-    {"coord": (825, 420), "size": 38, "rotate": -91.5, "color": (140, 30, 30)}, # 10. Номер (БОКОВОЙ)
-    {"coord": (450, 55), "size": 34, "rotate": -1.0, "color": (130, 30, 30)}    # 11. Номер (ВЕРХНИЙ ДУБЛЬ)
+    {"coord": (660, 750), "size": 32, "rotate": -1.5, "color": (40, 42, 55)},   # 1. Фамилия
+    {"coord": (660, 854), "size": 32, "rotate": -1.5, "color": (40, 42, 55)},   # 2. Имя
+    {"coord": (660, 874), "size": 32, "rotate": -1.5, "color": (40, 42, 55)},   # 3. Отчество
+    {"coord": (710, 914), "size": 28, "rotate": -1.2, "color": (35, 38, 50)},   # 4. Дата рожд.
+    {"coord": (660, 960), "size": 24, "rotate": -1.0, "color": (40, 42, 55), "width": 25}, # 5. Место рожд.
+    {"coord": (500, 920), "size": 28, "rotate": -1.2, "color": (35, 38, 50)},   # 6. Пол
+    {"coord": (546, 371), "size": 24, "rotate": -1.8, "color": (45, 45, 60), "width": 45}, # 7. Кем выдан
+    {"coord": (357, 437), "size": 28, "rotate": -1.5, "color": (40, 40, 55)},   # 8. Дата выд.
+    {"coord": (710, 430), "size": 30, "rotate": -1.5, "color": (30, 45, 120)},  # 9. Код подр.
+    {"coord": (870, 880), "size": 42, "rotate": -91.0, "color": (150, 30, 30)}, # 10. Номер (НИЖНИЙ)
+    {"coord": (860, 455), "size": 38, "rotate": -1.0, "color": (140, 30, 30)}    # 11. Номер (ВЕРХНИЙ)
 ]
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -46,46 +45,48 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
 
-# --- ФУНКЦИИ ОТРИСОВКИ ---
+# --- УМНАЯ ОТРИСОВКА С ЯКОРЕМ В ЦЕНТРЕ ---
 
-def draw_single_text(img, text, font, config):
-    """Рисует обычную строку с поворотом"""
+def draw_centered_text(img, text, font, config):
+    """Рисует текст, расширяющийся от центральной точки (anchor='mm')"""
+    # 1. Создаем временный слой для текста
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    # Создаем холст для текста с запасом
-    txt_layer = Image.new("RGBA", (tw + 40, th + 40), (0, 0, 0, 0))
-    d = ImageDraw.Draw(txt_layer)
-    d.text((20, 10), text, font=font, fill=config["color"])
     
+    # Слой чуть больше текста, чтобы при повороте не обрезало
+    txt_layer = Image.new("RGBA", (tw + 100, th + 100), (0, 0, 0, 0))
+    d = ImageDraw.Draw(txt_layer)
+    
+    # 2. Рисуем текст в центре слоя. 
+    # 'mm' — горизонтальный и вертикальный центр текста в указанной точке
+    d.text(((tw + 100) // 2, (th + 100) // 2), text, font=font, fill=config["color"], anchor="mm")
+    
+    # 3. Поворачиваем слой вокруг его центра
     if config["rotate"] != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
     
-    img.paste(txt_layer, (int(config["coord"][0]), int(config["coord"][1])), txt_layer)
+    # 4. Накладываем слой так, чтобы его центр совпал с точкой в FIELDS_CONFIG
+    lw, lh = txt_layer.size
+    offset_x = config["coord"][0] - (lw // 2)
+    offset_y = config["coord"][1] - (lh // 2)
+    
+    img.paste(txt_layer, (int(offset_x), int(offset_y)), txt_layer)
 
-def draw_multi_line_text(img, text, font, config):
-    """Рисует текст с переносом и центрированием строк между собой"""
+def draw_multi_line_centered(img, text, font, config):
+    """Разбивает текст на строки и центрирует каждую строку"""
     chars_limit = config.get("width", 30)
     lines = textwrap.wrap(text, width=chars_limit)[:3]
     
-    current_y = config["coord"][1]
-    center_x = config["coord"][0]
+    base_x, base_y = config["coord"]
+    line_step = config["size"] + 8 # Расстояние между строками
 
-    for line in lines:
-        bbox = font.getbbox(line)
-        w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        start_x = center_x - (w // 2) # Выравнивание по центру оси X
-        
-        txt_layer = Image.new("RGBA", (w + 40, h + 40), (0, 0, 0, 0))
-        d = ImageDraw.Draw(txt_layer)
-        d.text((20, 10), line, font=font, fill=config["color"])
-        
-        if config["rotate"] != 0:
-            txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
-        
-        img.paste(txt_layer, (int(start_x), int(current_y)), txt_layer)
-        current_y += h + 8
+    for i, line in enumerate(lines):
+        line_cfg = config.copy()
+        # Каждая новая строка смещается ниже центральной точки
+        line_cfg["coord"] = (base_x, base_y + (i * line_step))
+        draw_centered_text(img, line, font, line_cfg)
 
-# --- ХЕНДЛЕРЫ ---
+# --- ГЛАВНАЯ ЛОГИКА ---
 
 @dp.message(CommandStart())
 async def start(message: types.Message, state: FSMContext):
@@ -124,10 +125,10 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
 @dp.message(Form.inputting_data)
 async def process(message: types.Message, state: FSMContext):
     user_lines = [l.strip() for l in message.text.split('\n') if l.strip()]
-    if len(user_lines) < 10: return await message.answer(f"Надо 10 строк, а получено {len(user_lines)}")
+    if len(user_lines) < 10: return await message.answer(f"Надо 10 строк, получено {len(user_lines)}")
     
     data = await state.get_data()
-    await message.answer("⏳ Генерирую...")
+    await message.answer("✒️ Заполняю бланк...")
 
     try:
         with Image.open(os.path.join(TEMPLATES_DIR, data['tpl'])) as img:
@@ -139,30 +140,28 @@ async def process(message: types.Message, state: FSMContext):
                 try: font = ImageFont.truetype(FONT_PATH, cfg["size"])
                 except: font = ImageFont.load_default()
                 
-                # Поля 5 (индекс 4) и 7 (индекс 6) рисуем с переносом
-                if i in [4, 6]:
-                    draw_multi_line_text(img, text, font, cfg)
+                if i in [4, 6]: # Место рождения и Кем выдан
+                    draw_multi_line_centered(img, text, font, cfg)
                 else:
-                    draw_single_text(img, text, font, cfg)
+                    draw_centered_text(img, text, font, cfg)
                 
-                # ДУБЛИРОВАНИЕ НОМЕРА (10-я строка дублируется по 11-м координатам)
+                # ДУБЛИРОВАНИЕ НОМЕРА (10-я строка на 11-ю точку)
                 if i == 9:
                     cfg_v2 = FIELDS_CONFIG[10]
                     try: font_v2 = ImageFont.truetype(FONT_PATH, cfg_v2["size"])
                     except: font_v2 = ImageFont.load_default()
-                    draw_single_text(img, text, font_v2, cfg_v2)
+                    draw_centered_text(img, text, font_v2, cfg_v2)
 
-            # ЭФФЕКТЫ РЕАЛИЗМА
+            # ФИНАЛЬНЫЕ ЭФФЕКТЫ
             res = img.convert("RGB")
-            res = res.filter(ImageFilter.GaussianBlur(radius=0.35)) # Мягкость текста
+            res = res.filter(ImageFilter.GaussianBlur(radius=0.4)) # Размытие для реализма
             
             buf = BytesIO()
-            res.save(buf, format="JPEG", quality=92)
+            res.save(buf, format="JPEG", quality=90)
             buf.seek(0)
-            await message.answer_photo(BufferedInputFile(buf.read(), filename="ready.jpg"), caption="Готово!")
+            await message.answer_photo(BufferedInputFile(buf.read(), filename="ready.jpg"))
             await state.clear()
     except Exception as e:
-        logging.error(e)
         await message.answer(f"Ошибка: {e}")
 
 async def main():
