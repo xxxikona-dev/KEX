@@ -21,19 +21,19 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONT_PATH = os.path.join(BASE_DIR, "fonts", "font.ttf")
 
-# --- ТВОЯ КОНФИГУРАЦИЯ ---
+# --- ТВОЯ ОБНОВЛЕННАЯ КОНФИГУРАЦИЯ ---
 FIELDS_CONFIG = [
-    {"coord": (660, 750), "size": 24, "rotate": -0.1, "color": (40, 42, 55)},   # 1. Фамилия
-    {"coord": (660, 845), "size": 24, "rotate": -0.1, "color": (40, 42, 55)},   # 2. Имя
-    {"coord": (660, 874), "size": 24, "rotate": -0.1, "color": (40, 42, 55)},   # 3. Отчество
-    {"coord": (710, 914), "size": 24, "rotate": -0.1, "color": (35, 38, 50)},   # 4. Дата рожд.
-    {"coord": (660, 960), "size": 24, "rotate": 0, "color": (40, 42, 55), "width": 25}, # 5. Место рожд.
-    {"coord": (500, 920), "size": 24, "rotate": -0.2, "color": (35, 38, 50)},   # 6. Пол
-    {"coord": (535, 371), "size": 24, "rotate": 0, "color": (45, 45, 60), "width": 45}, # 7. Кем выдан
+    {"coord": (660, 753), "size": 24, "rotate": 0.3, "color": (40, 42, 55)},   # 1. Фамилия
+    {"coord": (660, 840), "size": 24, "rotate": 0.3, "color": (40, 42, 55)},   # 2. Имя
+    {"coord": (660, 874), "size": 24, "rotate": 0.3, "color": (40, 42, 55)},   # 3. Отчество
+    {"coord": (710, 914), "size": 24, "rotate": 0.5, "color": (35, 38, 50)},   # 4. Дата рожд.
+    {"coord": (660, 960), "size": 24, "rotate": 0, "color": (40, 42, 55), "width": 25, "spacing": 12, "lines": 2}, # 5. Место рожд.
+    {"coord": (500, 920), "size": 24, "rotate": 0.2, "color": (35, 38, 50)},   # 6. Пол
+    {"coord": (535, 371), "size": 24, "rotate": 0, "color": (45, 45, 60), "width": 45, "spacing": 12, "lines": 3}, # 7. Кем выдан
     {"coord": (357, 437), "size": 24, "rotate": -0.5, "color": (40, 40, 55)},   # 8. Дата выд.
     {"coord": (710, 430), "size": 24, "rotate": -0.2, "color": (40, 42, 55)},  # 9. Код подр.
-    {"coord": (870, 880), "size": 24, "rotate": -91.0, "color": (150, 30, 30)}, # 10. Номер (НИЖНИЙ)
-    {"coord": (860, 455), "size": 24, "rotate": -91.0, "color": (140, 30, 30)}    # 11. Номер (ВЕРХНИЙ)
+    {"coord": (870, 880), "size": 28, "rotate": -91.0, "color": (150, 30, 30)}, # 10. Номер (НИЖНИЙ)
+    {"coord": (860, 455), "size": 28, "rotate": -89.0, "color": (140, 30, 30)}    # 11. Номер (ВЕРХНИЙ)
 ]
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -44,45 +44,47 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
 
-# --- ФУНКЦИИ ОТРИСОВКИ С ПРОЗРАЧНОСТЬЮ ---
+# --- ФУНКЦИИ ОТРИСОВКИ ---
 
 def draw_centered_text(img, text, font, config):
     text = str(text).upper()
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # Создаем холст для текста
+    # Слой для текста
     txt_layer = Image.new("RGBA", (tw + 150, th + 150), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    # Добавляем прозрачность к цвету (Alpha = 230)
+    # Настройка прозрачности
     fill_color = config["color"] + (230,) 
-    
     d.text(((tw + 150) // 2, (th + 150) // 2), text, font=font, fill=fill_color, anchor="mm")
     
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
     
-    # Смягчаем края букв, чтобы не выглядели как наклейка
+    # Мягкое размытие краев
     txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=0.2))
 
     lw, lh = txt_layer.size
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
     
-    # Используем alpha_composite для корректного смешивания слоев
     img.alpha_composite(txt_layer, (offset_x, offset_y))
 
 def draw_multi_line_centered(img, text, font, config):
     text = str(text).upper()
     chars_limit = config.get("width", 30)
-    lines = textwrap.wrap(text, width=chars_limit)[:3]
+    max_lines = config.get("lines", 2)
+    
+    lines = textwrap.wrap(text, width=chars_limit)[:max_lines]
     
     base_x, base_y = config["coord"]
-    line_step = config["size"] + 6 
+    # Расстояние между базовыми линиями строк
+    line_step = config["size"] + config.get("spacing", 8) 
 
     for i, line in enumerate(lines):
         line_cfg = config.copy()
+        # Смещаем каждую следующую строку вниз
         line_cfg["coord"] = (base_x, base_y + (i * line_step))
         draw_centered_text(img, line, font, line_cfg)
 
@@ -111,7 +113,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     if act == "s":
         await state.update_data(tpl=tpls[idx])
         example_text = (
-            "Отправь данные 10 строками (каждая с новой строки):\n\n"
+            "Отправь данные 10 строками:\n\n"
             "<blockquote>"
             "ИВАНОВ\n"
             "ИВАН\n"
@@ -123,8 +125,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
             "10.10.2010\n"
             "770-001\n"
             "45 10 123456"
-            "</blockquote>\n\n"
-            "Бот сам переведет текст в <b>ЗАГЛАВНЫЕ БУКВЫ</b>."
+            "</blockquote>"
         )
         await call.message.answer(example_text, parse_mode="HTML")
         await state.set_state(Form.inputting_data)
@@ -142,11 +143,9 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
 async def process(message: types.Message, state: FSMContext):
     user_lines = [l.strip() for l in message.text.split('\n') if l.strip()]
     if len(user_lines) < 10: 
-        return await message.answer(f"Ошибка! Нужно 10 строк.")
+        return await message.answer(f"Нужно 10 строк!")
     
     data = await state.get_data()
-    await message.answer("⌛ Генерирую документ...")
-
     try:
         with Image.open(os.path.join(TEMPLATES_DIR, data['tpl'])) as img:
             img = img.convert("RGBA")
@@ -163,17 +162,15 @@ async def process(message: types.Message, state: FSMContext):
                 if i == 9:
                     draw_centered_text(img, user_lines[i], font, FIELDS_CONFIG[10])
 
-            # Финальная склейка и легкий блюр всей сцены
             res = img.convert("RGB")
-            res = res.filter(ImageFilter.GaussianBlur(radius=0.25)) 
+            res = res.filter(ImageFilter.GaussianBlur(radius=0.2)) 
             
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
             buf.seek(0)
-            await message.answer_photo(BufferedInputFile(buf.read(), filename="ready.jpg"), caption="Ваш документ готов!")
+            await message.answer_photo(BufferedInputFile(buf.read(), filename="ready.jpg"))
             await state.clear()
     except Exception as e:
-        logging.error(e)
         await message.answer(f"Ошибка: {e}")
 
 async def main():
