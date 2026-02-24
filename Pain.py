@@ -26,10 +26,10 @@ FONT_PATH = os.path.join(BASE_DIR, "fonts", "font.ttf")
 FIELDS_CONFIG = [
     {"coord": (660, 757.5), "size": 24, "rotate": 0.7, "color": (40, 42, 55)},   # 1. Фамилия
     {"coord": (660, 837), "size": 24, "rotate": 1.2, "color": (40, 42, 55)},     # 2. Имя
-    {"coord": (660, 877.5), "size": 24, "rotate": 1.2, "color": (40, 42, 55)},     # 3. Отчество
+    {"coord": (660, 878), "size": 24, "rotate": 1.2, "color": (40, 42, 55)},     # 3. Отчество
     {"coord": (710, 917), "size": 24, "rotate": 1.2, "color": (35, 38, 50)},   # 4. Дата рожд.
-    {"coord": (660, 999.5), "size": 24, "rotate": 1.7, "color": (40, 42, 55), "width": 20, "spacing": 14.5, "lines": 3}, # 5. Место рожд.
-    {"coord": (500, 922.5), "size": 23, "rotate": 0.6, "color": (35, 38, 50)},     # 6. Пол
+    {"coord": (660, 999.5), "size": 24, "rotate": 1.7, "color": (40, 42, 55), "width": 20, "spacing": 15, "lines": 3}, # 5. Место рожд.
+    {"coord": (500, 923.5), "size": 23, "rotate": 0.6, "color": (35, 38, 50)},     # 6. Пол
     {"coord": (535, 358.5), "size": 24, "rotate": 0.7, "color": (45, 45, 60), "width": 22, "spacing": 14.5, "lines": 3}, # 7. Кем выдан
     {"coord": (357, 439), "size": 24, "rotate": -0.3, "color": (40, 40, 55)},  # 8. Дата выд.
     {"coord": (710, 434), "size": 24, "rotate": -0.2, "color": (40, 42, 55)},    # 9. Код подр.
