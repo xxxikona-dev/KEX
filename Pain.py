@@ -28,9 +28,9 @@ FIELDS_CONFIG = [
     {"coord": (660, 837), "size": 24, "rotate": 1.2, "color": (40, 42, 55)},     # 2. Имя
     {"coord": (660, 878), "size": 24, "rotate": 1.2, "color": (40, 42, 55)},     # 3. Отчество
     {"coord": (710, 917), "size": 24, "rotate": 1.2, "color": (35, 38, 50)},   # 4. Дата рожд.
-    {"coord": (660, 999.5), "size": 24, "rotate": 1.7, "color": (40, 42, 55), "width": 20, "spacing": 15.2, "lines": 3}, # 5. Место рожд.
+    {"coord": (660, 999.5), "size": 24, "rotate": 1.7, "color": (40, 42, 55), "width": 20, "spacing": 15.5, "lines": 3}, # 5. Место рожд.
     {"coord": (500, 923.5), "size": 23, "rotate": 0.7, "color": (35, 38, 50)},     # 6. Пол
-    {"coord": (535, 351.5), "size": 24, "rotate": 0.7, "color": (45, 45, 60), "width": 22, "spacing": 14.5, "lines": 3}, # 7. Кем выдан
+    {"coord": (535, 350.5), "size": 24, "rotate": 0.7, "color": (45, 45, 60), "width": 22, "spacing": 14.5, "lines": 3}, # 7. Кем выдан
     {"coord": (357, 439), "size": 24, "rotate": -0.3, "color": (40, 40, 55)},  # 8. Дата выд.
     {"coord": (710, 434), "size": 24, "rotate": -0.2, "color": (40, 42, 55)},    # 9. Код подр.
     {"coord": (870, 880), "size": 28, "rotate": -87.0, "color": (150, 30, 30)},  # 10. Номер (НИЖНИЙ)
