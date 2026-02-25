@@ -243,6 +243,7 @@ def generate_random_data():
 
 # --- ВОДЯНЫЕ ЗНАКИ ---
 def add_watermarks(image):
+    """Добавляет водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
@@ -303,6 +304,51 @@ def add_watermarks(image):
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
+
+# --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА С ВОДЯНЫМИ ЗНАКАМИ ---
+async def create_preview_with_watermark(category, template_name, random_data):
+    """Создает предпросмотр шаблона с рандомными данными и водяными знаками"""
+    try:
+        config = get_config(category)
+        if not config:
+            return None
+            
+        f1, f2, f_num = get_font_path(category, "1"), get_font_path(category, "2"), get_font_path(category, "num")
+        if not f1:
+            return None
+        
+        template_path = os.path.join(TEMPLATES_DIR, category, template_name)
+        with Image.open(template_path) as img:
+            img = img.convert("RGBA")
+            
+            # Заполняем рандомными данными
+            for i in range(min(10, len(config))):
+                cfg = config[i]
+                text = random_data[i]
+                if i == 9:
+                    text = format_passport_number(text)
+                    curr_f = f_num if f_num else f1
+                elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
+                    curr_f = f2
+                else: 
+                    curr_f = f1
+                
+                font = ImageFont.truetype(curr_f, cfg["size"])
+                process_field(img, text, font, cfg)
+                if i == 9 and len(config) > 10:
+                    process_field(img, text, font, config[10])
+            
+            # Добавляем водяные знаки ТОЛЬКО для предпросмотра
+            img_with_watermarks = add_watermarks(img)
+            
+            res = img_with_watermarks.convert("RGB")
+            buf = BytesIO()
+            res.save(buf, format="JPEG", quality=85)  # Чуть ниже качество для предпросмотра
+            buf.seek(0)
+            return buf
+    except Exception as e:
+        logging.error(f"Ошибка создания предпросмотра: {e}")
+        return None
 
 # --- ЭФФЕКТЫ РЕАЛИЗМА ---
 def add_noise_to_layer(layer, intensity=12):
@@ -447,8 +493,6 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
         # Создаем инвойс в CryptoBot
         amount_usdt = amount * TOKEN_PRICE_USDT
         
-        # Для cryptopay библиотеки синтаксис может отличаться
-        # Проверьте документацию вашей версии библиотеки
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=amount_usdt,
@@ -456,7 +500,7 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
             payload=payment_id
         )
         
-        # Получаем ID инвойса (может быть invoice.invoice_id или invoice.id)
+        # Получаем ID инвойса и URL для оплаты
         invoice_id = getattr(invoice, 'invoice_id', getattr(invoice, 'id', None))
         pay_url = getattr(invoice, 'pay_url', getattr(invoice, 'url', None))
         
@@ -530,13 +574,11 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             return
         
         # Проверяем статус инвойса в CryptoBot
-        # Синтаксис может отличаться в зависимости от версии библиотеки
         try:
             invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
             invoice = invoices[0] if invoices else None
             invoice_status = getattr(invoice, 'status', None)
         except:
-            # Альтернативный метод
             invoice = await crypto.get_invoice(invoice_id)
             invoice_status = getattr(invoice, 'status', None)
         
@@ -578,23 +620,46 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
     if not tpls: 
         return await call.answer("Нет фото!", show_alert=True)
     
-    await state.update_data(category=category, tpls=tpls)
+    await state.update_data(category=category, tpls=tpls, current_index=0)
     
+    # Генерируем рандомные данные для предпросмотра
     random_data = generate_random_data()
     await state.update_data(preview_data=random_data)
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="⬅️", callback_data="p_0"),
-        InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
-        InlineKeyboardButton(text="➡️", callback_data="n_0")
-    ]])
+    # Создаем предпросмотр с водяными знаками и рандомными данными
+    preview_buf = await create_preview_with_watermark(category, tpls[0], random_data)
     
-    await call.message.answer_photo(
-        FSInputFile(os.path.join(cat_path, tpls[0])), 
-        caption=f"Категория: <b>{category}</b>\nШаблон: <code>{tpls[0]}</code>", 
-        reply_markup=kb, 
-        parse_mode="HTML"
-    )
+    if preview_buf:
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️", callback_data="p_0"),
+            InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
+            InlineKeyboardButton(text="➡️", callback_data="n_0")
+        ]])
+        
+        await call.message.answer_photo(
+            BufferedInputFile(preview_buf.read(), filename="preview.jpg"),
+            caption=f"📋 <b>Категория:</b> {category}\n"
+                    f"🖼 <b>Шаблон:</b> {tpls[0]}\n\n"
+                    f"<i>⚠️ На предпросмотре водяные знаки и тестовые данные</i>\n"
+                    f"<i>✅ Готовый результат будет без водяных знаков</i>",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+    else:
+        # Если не удалось создать предпросмотр, показываем обычное фото
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️", callback_data="p_0"),
+            InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
+            InlineKeyboardButton(text="➡️", callback_data="n_0")
+        ]])
+        
+        await call.message.answer_photo(
+            FSInputFile(os.path.join(cat_path, tpls[0])),
+            caption=f"📋 <b>Категория:</b> {category}\n🖼 <b>Шаблон:</b> {tpls[0]}",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+    
     await state.set_state(Form.browsing_templates)
     await call.answer()
 
@@ -602,6 +667,8 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
 async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     category, tpls = data.get("category"), data.get("tpls")
+    current_index = data.get("current_index", 0)
+    
     if not category or not tpls: 
         return await call.answer("Сессия истекла! Введите /start", show_alert=True)
     
@@ -661,20 +728,53 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
         
         await state.set_state(Form.inputting_data)
     else:
-        new_idx = (idx - 1) % len(tpls) if act == "p" else (idx + 1) % len(tpls)
-        await state.update_data(preview_data=generate_random_data())
+        if act == "p":
+            new_idx = (idx - 1) % len(tpls)
+        else:  # act == "n"
+            new_idx = (idx + 1) % len(tpls)
         
-        await call.message.edit_media(
-            InputMediaPhoto(
-                media=FSInputFile(os.path.join(TEMPLATES_DIR, category, tpls[new_idx])), 
-                caption=f"Категория: <b>{category}</b>\nШаблон: <code>{tpls[new_idx]}</code>", 
-                parse_mode="HTML"
-            ), 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+        # Обновляем индекс
+        await state.update_data(current_index=new_idx)
+        
+        # Генерируем новые рандомные данные для следующего шаблона
+        random_data = generate_random_data()
+        await state.update_data(preview_data=random_data)
+        
+        # Создаем предпросмотр с водяными знаками
+        preview_buf = await create_preview_with_watermark(category, tpls[new_idx], random_data)
+        
+        if preview_buf:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="⬅️", callback_data=f"p_{new_idx}"),
                 InlineKeyboardButton(text="✅ Выбрать", callback_data=f"s_{new_idx}"),
-                InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")]])
-        )
+                InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")
+            ]])
+            
+            await call.message.delete()
+            await call.message.answer_photo(
+                BufferedInputFile(preview_buf.read(), filename="preview.jpg"),
+                caption=f"📋 <b>Категория:</b> {category}\n"
+                        f"🖼 <b>Шаблон:</b> {tpls[new_idx]}\n\n"
+                        f"<i>⚠️ На предпросмотре водяные знаки и тестовые данные</i>\n"
+                        f"<i>✅ Готовый результат будет без водяных знаков</i>",
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️", callback_data=f"p_{new_idx}"),
+                InlineKeyboardButton(text="✅ Выбрать", callback_data=f"s_{new_idx}"),
+                InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")
+            ]])
+            
+            await call.message.edit_media(
+                InputMediaPhoto(
+                    media=FSInputFile(os.path.join(TEMPLATES_DIR, category, tpls[new_idx])),
+                    caption=f"📋 <b>Категория:</b> {category}\n🖼 <b>Шаблон:</b> {tpls[new_idx]}",
+                    parse_mode="HTML"
+                ),
+                reply_markup=kb
+            )
     await call.answer()
 
 @dp.message(Form.inputting_data)
@@ -729,9 +829,8 @@ async def process_data(message: types.Message, state: FSMContext):
                 if i == 9 and len(config) > 10:
                     process_field(img, text, font, config[10])
 
-            img_with_watermarks = add_watermarks(img)
-            
-            res = img_with_watermarks.convert("RGB")
+            # НЕ добавляем водяные знаки на финальный результат!
+            res = img.convert("RGB")
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
             buf.seek(0)
@@ -745,7 +844,7 @@ async def process_data(message: types.Message, state: FSMContext):
             
             await message.answer_photo(
                 BufferedInputFile(buf.read(), filename="result.jpg"),
-                caption=f"✅ Готово!\n{balance_msg}"
+                caption=f"✅ Готово! Без водяных знаков.\n{balance_msg}"
             )
             await state.clear()
     except Exception as e:
@@ -832,7 +931,6 @@ async def cmd_stats(message: types.Message):
     await message.answer(stats_text, parse_mode="HTML")
 
 async def main(): 
-    # Для использования polling (для разработки):
     await dp.start_polling(bot)
 
 if __name__ == "__main__": 
