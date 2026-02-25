@@ -37,7 +37,7 @@ FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 # ID администраторов (бесконечные токены)
-ADMIN_IDS = [5153650495]  # Добавьте свои ID
+ADMIN_IDS = [5153650495, 8225633174]  # Добавьте ID админов
 
 # Настройки CryptoBot
 TOKEN_PRICE_USDT = 2  # Цена одного токена в USDT
@@ -109,9 +109,25 @@ def deduct_token(user_id):
     return success
 
 def add_tokens(user_id, amount):
+    """Добавляет токены пользователю"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (amount, user_id))
+    
+    # Проверяем, существует ли пользователь
+    cursor.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    
+    if result:
+        # Если пользователь существует, обновляем баланс
+        current_tokens = result[0]
+        new_tokens = current_tokens + amount
+        cursor.execute("UPDATE users SET tokens = ? WHERE user_id = ?", (new_tokens, user_id))
+        print(f"DEBUG: Обновляем баланс пользователя {user_id}: {current_tokens} + {amount} = {new_tokens}")
+    else:
+        # Если пользователь не существует, создаем запись
+        cursor.execute("INSERT INTO users (user_id, tokens) VALUES (?, ?)", (user_id, amount))
+        print(f"DEBUG: Создаем нового пользователя {user_id} с балансом {amount}")
+    
     conn.commit()
     conn.close()
 
@@ -875,10 +891,12 @@ async def cmd_balance(message: types.Message):
 async def cmd_add_tokens(message: types.Message):
     user_id = message.from_user.id
     
+    # Проверяем, является ли пользователь админом
     if user_id not in ADMIN_IDS:
         await message.answer("❌ У вас нет прав для этой команды")
         return
     
+    # Парсим аргументы: /add_tokens <user_id> <количество>
     args = message.text.split()
     if len(args) != 3:
         await message.answer("Использование: /add_tokens <user_id> <количество>")
@@ -892,12 +910,54 @@ async def cmd_add_tokens(message: types.Message):
             await message.answer("Количество должно быть положительным")
             return
         
+        # Добавляем токены
         add_tokens(target_id, amount)
+        
+        # Проверяем новый баланс
         new_balance = get_user_tokens(target_id)
         
-        await message.answer(f"✅ Добавлено {amount} токенов пользователю {target_id}\nНовый баланс: {new_balance}")
+        await message.answer(
+            f"✅ Добавлено {amount} токенов пользователю {target_id}\n"
+            f"💰 Новый баланс: {new_balance} токенов"
+        )
+        
+        # Пробуем уведомить пользователя
+        try:
+            await bot.send_message(
+                target_id,
+                f"✅ Вам начислено {amount} токенов!\n"
+                f"💰 Текущий баланс: {new_balance} токенов"
+            )
+        except Exception as e:
+            logging.error(f"Не удалось уведомить пользователя {target_id}: {e}")
+            
     except ValueError:
-        await message.answer("Неверный формат чисел")
+        await message.answer("❌ Неверный формат чисел. Используйте: /add_tokens <user_id> <количество>")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+
+@dp.message(Command("get_balance"))
+async def cmd_get_balance(message: types.Message):
+    user_id = message.from_user.id
+    
+    # Проверяем, является ли пользователь админом
+    if user_id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет прав для этой команды")
+        return
+    
+    # Парсим аргументы: /get_balance <user_id>
+    args = message.text.split()
+    if len(args) != 2:
+        await message.answer("Использование: /get_balance <user_id>")
+        return
+    
+    try:
+        target_id = int(args[1])
+        tokens = get_user_tokens(target_id)
+        
+        await message.answer(f"💰 Баланс пользователя {target_id}: {tokens} токенов")
+    except ValueError:
+        await message.answer("❌ Неверный формат ID")
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
