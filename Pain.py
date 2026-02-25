@@ -6,12 +6,9 @@ import textwrap
 import re
 import random
 import sqlite3
-import hmac
-import hashlib
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime
 import uuid
-from typing import Optional
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
@@ -19,18 +16,21 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, FSInputFile, BufferedInputFile
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-from aiohttp import web
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from dotenv import load_dotenv
-from aiocryptopay import AioCryptoPay, Networks
+
+# Импорт для CryptoBot API
+try:
+    from aiocryptopay import AioCryptoPay, Networks
+    CRYPTOPAY_AVAILABLE = True
+except ImportError:
+    print("⚠️ Библиотека aiocryptopay не установлена. Установите: pip install aiocryptopay")
+    CRYPTOPAY_AVAILABLE = False
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
 CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
-CRYPTOBOT_WEBHOOK_SECRET = os.getenv("CRYPTOBOT_WEBHOOK_SECRET", "default_secret")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-domain.com/webhook/cryptobot")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
@@ -48,9 +48,8 @@ dp = Dispatcher()
 
 # Инициализация CryptoBot
 crypto = None
-if CRYPTOBOT_TOKEN:
+if CRYPTOBOT_TOKEN and CRYPTOPAY_AVAILABLE:
     try:
-        # Используем основную сеть CryptoBot
         crypto = AioCryptoPay(token=CRYPTOBOT_TOKEN, network=Networks.MAIN_NET)
         print("✅ CryptoBot API инициализирован")
     except Exception as e:
@@ -70,8 +69,7 @@ def init_db():
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            payment_id TEXT UNIQUE,
+            payment_id TEXT PRIMARY KEY,
             user_id INTEGER,
             amount_tokens INTEGER,
             amount_usdt REAL,
@@ -79,15 +77,6 @@ def init_db():
             invoice_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             completed_at TIMESTAMP
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS invoices (
-            invoice_id TEXT PRIMARY KEY,
-            payment_id TEXT,
-            user_id INTEGER,
-            status TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     conn.commit()
@@ -131,7 +120,7 @@ def create_payment_record(user_id, tokens_amount, payment_id, invoice_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO payments (payment_id, user_id, amount_tokens, amount_usdt, invoice_id) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO payments (payment_id, user_id, amount_tokens, amount_usdt, invoice_id, status) VALUES (?, ?, ?, ?, ?, 'pending')",
         (payment_id, user_id, tokens_amount, usdt_amount, invoice_id)
     )
     conn.commit()
@@ -148,32 +137,11 @@ def update_payment_status(payment_id, status):
     conn.commit()
     conn.close()
 
-def save_invoice(invoice_id, payment_id, user_id, status):
+def get_payment_by_id(payment_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT OR REPLACE INTO invoices (invoice_id, payment_id, user_id, status) VALUES (?, ?, ?, ?)",
-        (invoice_id, payment_id, user_id, status)
-    )
-    conn.commit()
-    conn.close()
-
-def get_payment_by_invoice(invoice_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT payment_id, user_id, amount_tokens, status FROM payments WHERE invoice_id = ?",
-        (invoice_id,)
-    )
-    result = cursor.fetchone()
-    conn.close()
-    return result
-
-def get_user_by_payment(payment_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT user_id, amount_tokens FROM payments WHERE payment_id = ?",
+        "SELECT user_id, amount_tokens, invoice_id, status FROM payments WHERE payment_id = ?",
         (payment_id,)
     )
     result = cursor.fetchone()
@@ -367,6 +335,7 @@ async def create_preview_with_watermark(category, template_name, random_data):
                     curr_f = f1
                 
                 font = ImageFont.truetype(curr_f, cfg["size"])
+                from functions import process_field
                 process_field(img, text, font, cfg)
                 if i == 9 and len(config) > 10:
                     process_field(img, text, font, config[10])
@@ -522,17 +491,14 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
         # Создаем инвойс в CryptoBot
         amount_usdt = amount * TOKEN_PRICE_USDT
         
-        # Исправлено: expires_in (не expired_in)
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=amount_usdt,
             description=f"Покупка {amount} токенов",
-            payload=payment_id,
-            expires_in=3600  # Счет действителен 1 час (3600 секунд)
+            payload=payment_id
         )
         
-        # Сохраняем информацию о счете
-        save_invoice(invoice.invoice_id, payment_id, user_id, 'active')
+        # Сохраняем запись о платеже
         create_payment_record(user_id, amount, payment_id, invoice.invoice_id)
         
         # Создаем клавиатуру с кнопкой для оплаты
@@ -547,10 +513,9 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
             f"Токенов: <b>{amount}</b>\n"
             f"Сумма: <b>{amount_usdt} USDT</b>\n\n"
             f"ID платежа: <code>{payment_id}</code>\n\n"
-            f"⏰ Счет действителен 1 час\n\n"
             "1. Нажмите кнопку \"Оплатить\"\n"
             "2. Оплатите счет в @CryptoBot\n"
-            "3. Нажмите \"Проверить оплату\" или дождитесь автоматического зачисления",
+            "3. Нажмите \"Проверить оплату\" для проверки",
             reply_markup=kb,
             parse_mode="HTML"
         )
@@ -579,20 +544,17 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
     
     try:
         # Получаем информацию о платеже из БД
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT amount_tokens, invoice_id, status FROM payments WHERE payment_id = ? AND user_id = ?",
-            (payment_id, user_id)
-        )
-        result = cursor.fetchone()
-        conn.close()
+        payment_info = get_payment_by_id(payment_id)
         
-        if not result:
+        if not payment_info:
             await call.answer("Платеж не найден!", show_alert=True)
             return
         
-        amount_tokens, invoice_id, status = result
+        db_user_id, amount_tokens, invoice_id, status = payment_info
+        
+        if db_user_id != user_id:
+            await call.answer("Это не ваш платеж!", show_alert=True)
+            return
         
         if status == "completed":
             await call.answer("Платеж уже обработан! Токены зачислены.", show_alert=True)
@@ -600,9 +562,9 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             return
         
         # Получаем инвойс по ID
-        invoice = await crypto.get_invoices(invoice_ids=[invoice_id])
+        invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
         
-        if invoice and invoice[0].status == 'paid':
+        if invoices and invoices[0].status == 'paid':
             # Платеж подтвержден
             update_payment_status(payment_id, "completed")
             add_tokens(user_id, amount_tokens)
@@ -842,6 +804,7 @@ async def process_data(message: types.Message, state: FSMContext):
                 if i == 9 and len(config) > 10:
                     process_field(img, text, font, config[10])
 
+            # Не добавляем водяные знаки на финальный результат
             res = img.convert("RGB")
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
@@ -941,84 +904,8 @@ async def cmd_stats(message: types.Message):
     
     await message.answer(stats_text, parse_mode="HTML")
 
-# --- WEBHOOK ДЛЯ CRYPTOBOT ---
-async def cryptobot_webhook(request):
-    """Обработка webhook уведомлений от CryptoBot"""
-    try:
-        data = await request.json()
-        logging.info(f"Получен webhook от CryptoBot: {data}")
-        
-        # Проверяем тип уведомления
-        if data.get('event') == 'invoice_paid':
-            # Получаем данные инвойса
-            invoice = data.get('payload', {})
-            invoice_id = invoice.get('invoice_id')
-            payload = invoice.get('payload')  # это наш payment_id
-            status = invoice.get('status')
-            
-            if payload and status == 'paid':
-                # Обновляем статус платежа
-                update_payment_status(payload, 'completed')
-                
-                # Получаем информацию о платеже
-                payment_info = get_user_by_payment(payload)
-                if payment_info:
-                    user_id, amount_tokens = payment_info
-                    
-                    # Начисляем токены
-                    add_tokens(user_id, amount_tokens)
-                    
-                    # Пробуем уведомить пользователя
-                    try:
-                        await bot.send_message(
-                            user_id,
-                            f"✅ <b>Оплата подтверждена!</b>\n\n"
-                            f"Зачислено: <b>{amount_tokens} токенов</b>\n"
-                            f"Новый баланс: <b>{get_user_tokens(user_id)} токенов</b>",
-                            parse_mode="HTML"
-                        )
-                    except Exception as e:
-                        logging.error(f"Не удалось уведомить пользователя {user_id}: {e}")
-        
-        return web.Response(text="OK")
-    except Exception as e:
-        logging.error(f"Ошибка в webhook: {e}")
-        return web.Response(status=500, text="Error")
-
-async def on_startup(app):
-    """Действия при запуске приложения"""
-    # Устанавливаем webhook для бота
-    webhook_url = f"{WEBHOOK_URL}/webhook/bot"
-    await bot.set_webhook(webhook_url, drop_pending_updates=True)
-    logging.info(f"Webhook для бота установлен: {webhook_url}")
-
-async def on_shutdown(app):
-    """Действия при остановке приложения"""
-    await bot.delete_webhook()
-    await bot.session.close()
-
-def main():
-    """Запуск приложения с aiohttp"""
-    app = web.Application()
-    
-    # Настраиваем webhook для бота
-    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook/bot")
-    
-    # Добавляем эндпоинт для webhook от CryptoBot
-    app.router.add_post('/webhook/cryptobot', cryptobot_webhook)
-    
-    # Настраиваем startup и shutdown
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-    
-    # Запускаем сервер
-    web.run_app(app, host='0.0.0.0', port=8080)
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Проверяем, настроен ли WEBHOOK_URL
-    if WEBHOOK_URL and WEBHOOK_URL != "https://your-domain.com/webhook/cryptobot":
-        # Запуск с webhook
-        main()
-    else:
-        # Запуск с polling (для разработки)
-        asyncio.run(dp.start_polling(bot))
+    asyncio.run(main())
