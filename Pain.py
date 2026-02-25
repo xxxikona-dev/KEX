@@ -80,10 +80,10 @@ def get_font_path(category, font_type="1"):
     return None
 
 def format_passport_number(text):
-    """Превращает 0000000000 или 0000 000000 в 00 00 000000"""
+    """Превращает 0000000000 или 0000 000000 в 00  00  000000"""
     clean = text.replace(" ", "")
     if len(clean) == 10 and clean.isdigit():
-        return f"{clean[:2]} {clean[2:4]} {clean[4:]}"
+        return f"{clean[:2]}  {clean[2:4]}  {clean[4:]}"
     return text
 
 # --- ОТРИСОВКА ---
