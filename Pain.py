@@ -241,14 +241,19 @@ def generate_random_data():
         f"{random.randint(1000, 9999)} {random.randint(100000, 999999)}"
     ]
 
-# --- ВОДЯНЫЕ ЗНАКИ ---
+# --- ВОДЯНЫЕ ЗНАКИ (УЛУЧШЕННАЯ ВИДИМОСТЬ) ---
 def add_watermarks(image):
-    """Добавляет водяные знаки на изображение"""
+    """Добавляет хорошо видимые водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
     
-    watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ", "DEMO VERSION"]
+    # Увеличили количество и разнообразие текстов
+    watermark_texts = [
+        "DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ", 
+        "DEMO VERSION", "ТОЛЬКО ДЛЯ ПРЕДПРОСМОТРА", "НЕ ДЕЙСТВИТЕЛЬНО",
+        "WATERMARK", "DEMO ONLY", "ТЕСТОВЫЙ ОБРАЗЕЦ", "НЕ ДЛЯ ИСПОЛЬЗОВАНИЯ"
+    ]
     
     try:
         font_path = os.path.join(FONTS_DIR, "arial.ttf")
@@ -261,7 +266,8 @@ def add_watermarks(image):
             font_path = font_files[0] if font_files else None
         
         if font_path:
-            font_size = 40
+            # Увеличили размер шрифта для лучшей видимости
+            font_size = 60  # Было 40
             font = ImageFont.truetype(font_path, font_size)
         else:
             font = ImageFont.load_default()
@@ -270,37 +276,84 @@ def add_watermarks(image):
     
     width, height = watermarked.size
     
-    spacing = 150
+    # Уменьшили расстояние между водяными знаками для большей плотности
+    spacing = 100  # Было 150
+    
+    # Увеличили непрозрачность водяных знаков
+    opacity_range = (80, 150)  # Было (20, 40)
+    
     for y in range(-height, height * 2, spacing):
-        for x in range(-width, width * 2, spacing * 2):
+        for x in range(-width, width * 2, spacing):
             text = random.choice(watermark_texts)
             
-            bbox = draw.textbbox((0, 0), text, font=font)
+            # Иногда используем крупный текст
+            if random.random() < 0.3:  # 30% шанс на крупный текст
+                current_font_size = 80
+                try:
+                    if font_path:
+                        current_font = ImageFont.truetype(font_path, current_font_size)
+                    else:
+                        current_font = font
+                except:
+                    current_font = font
+            else:
+                current_font = font
+            
+            bbox = draw.textbbox((0, 0), text, font=current_font)
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
             
-            angle = random.randint(-30, 30)
+            # Более разнообразные углы наклона
+            angle = random.randint(-45, 45)
             
             txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
             
-            txt_draw.text((50, 50), text, font=font, fill=(255, 255, 255, random.randint(20, 40)), anchor="mm")
+            # Используем красный цвет для некоторых водяных знаков (лучше видно)
+            if random.random() < 0.2:  # 20% красных
+                fill_color = (255, 0, 0, random.randint(100, 180))
+            else:
+                fill_color = (255, 255, 255, random.randint(opacity_range[0], opacity_range[1]))
+            
+            txt_draw.text((50, 50), text, font=current_font, fill=fill_color, anchor="mm")
             
             txt_img = txt_img.rotate(angle, expand=1, resample=Image.BICUBIC)
             
             watermark_layer.alpha_composite(txt_img, (x + random.randint(-50, 50), y + random.randint(-50, 50)))
     
-    for _ in range(500):
+    # Добавляем больше крупных точек
+    for _ in range(1000):  # Было 500
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        draw.point((x, y), fill=(255, 255, 255, random.randint(30, 70)))
+        # Точки разного размера и цвета
+        size = random.randint(2, 6)
+        color_intensity = random.randint(100, 200)
+        draw.ellipse(
+            (x - size, y - size, x + size, y + size), 
+            fill=(255, 0, 0, color_intensity) if random.random() < 0.3 else (255, 255, 255, color_intensity)
+        )
     
-    for _ in range(50):
+    # Добавляем больше линий и делаем их толще
+    for _ in range(100):  # Было 50
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
-        draw.line([(x1, y1), (x2, y2)], fill=(255, 255, 255, random.randint(15, 30)), width=random.randint(1, 3))
+        line_width = random.randint(2, 5)  # Было (1, 3)
+        line_opacity = random.randint(80, 150)  # Было (15, 30)
+        
+        # Красные линии для лучшей видимости
+        if random.random() < 0.4:
+            draw.line([(x1, y1), (x2, y2)], fill=(255, 0, 0, line_opacity), width=line_width)
+        else:
+            draw.line([(x1, y1), (x2, y2)], fill=(255, 255, 255, line_opacity), width=line_width)
+    
+    # Добавляем диагональные полосы через всё изображение
+    stripe_opacity = 60
+    stripe_width = 30
+    for i in range(-height, height * 2, 200):
+        draw.line([(0, i), (width, i + width)], fill=(255, 0, 0, stripe_opacity), width=stripe_width)
+        draw.line([(width, i), (0, i + width)], fill=(255, 0, 0, stripe_opacity), width=stripe_width)
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
