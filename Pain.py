@@ -34,13 +34,10 @@ CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
-DB_PATH = os.path.join(BASE_DIR, "users.db")
+DB_PATH = os.path.join(BASE_DIR, "payments.db")
 
-# ID администраторов (бесконечные токены)
-ADMIN_IDS = [5153650495, 8225633174]  # Добавьте ID админов
-
-# Настройки CryptoBot
-TOKEN_PRICE_USDT = 2  # Цена одного токена в USDT
+# Цена одной генерации в USDT
+PRICE_PER_PHOTO = 1  # 1 USDT за фото
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 bot = Bot(token=TOKEN, session=AiohttpSession())
@@ -56,25 +53,19 @@ if CRYPTOBOT_TOKEN and CRYPTOPAY_AVAILABLE:
         print(f"❌ Ошибка инициализации CryptoBot: {e}")
         crypto = None
 
-# --- БАЗА ДАННЫХ ---
+# --- БАЗА ДАННЫХ ДЛЯ ПЛАТЕЖЕЙ ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            tokens INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             payment_id TEXT PRIMARY KEY,
             user_id INTEGER,
-            amount_tokens INTEGER,
-            amount_usdt REAL,
             status TEXT DEFAULT 'pending',
             invoice_id TEXT,
+            category TEXT,
+            template TEXT,
+            user_data TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             completed_at TIMESTAMP
         )
@@ -82,62 +73,12 @@ def init_db():
     conn.commit()
     conn.close()
 
-def get_user_tokens(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else 0
-
-def add_user(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR IGNORE INTO users (user_id, tokens) VALUES (?, 0)", (user_id,))
-    conn.commit()
-    conn.close()
-
-def deduct_token(user_id):
-    if user_id in ADMIN_IDS:
-        return True
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE users SET tokens = tokens - 1 WHERE user_id = ? AND tokens > 0", (user_id,))
-    success = cursor.rowcount > 0
-    conn.commit()
-    conn.close()
-    return success
-
-def add_tokens(user_id, amount):
-    """Добавляет токены пользователю"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    # Проверяем, существует ли пользователь
-    cursor.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
-    result = cursor.fetchone()
-    
-    if result:
-        # Если пользователь существует, обновляем баланс
-        current_tokens = result[0]
-        new_tokens = current_tokens + amount
-        cursor.execute("UPDATE users SET tokens = ? WHERE user_id = ?", (new_tokens, user_id))
-        print(f"DEBUG: Обновляем баланс пользователя {user_id}: {current_tokens} + {amount} = {new_tokens}")
-    else:
-        # Если пользователь не существует, создаем запись
-        cursor.execute("INSERT INTO users (user_id, tokens) VALUES (?, ?)", (user_id, amount))
-        print(f"DEBUG: Создаем нового пользователя {user_id} с балансом {amount}")
-    
-    conn.commit()
-    conn.close()
-
-def create_payment_record(user_id, tokens_amount, payment_id, invoice_id):
-    usdt_amount = tokens_amount * TOKEN_PRICE_USDT
+def create_payment_record(payment_id, user_id, invoice_id, category, template, user_data):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO payments (payment_id, user_id, amount_tokens, amount_usdt, invoice_id, status) VALUES (?, ?, ?, ?, ?, 'pending')",
-        (payment_id, user_id, tokens_amount, usdt_amount, invoice_id)
+        "INSERT INTO payments (payment_id, user_id, invoice_id, category, template, user_data, status) VALUES (?, ?, ?, ?, ?, ?, 'pending')",
+        (payment_id, user_id, invoice_id, category, template, user_data)
     )
     conn.commit()
     conn.close()
@@ -157,7 +98,7 @@ def get_payment_by_id(payment_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT user_id, amount_tokens, invoice_id, status FROM payments WHERE payment_id = ?",
+        "SELECT user_id, category, template, user_data, status FROM payments WHERE payment_id = ?",
         (payment_id,)
     )
     result = cursor.fetchone()
@@ -172,7 +113,6 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
     waiting_payment = State()
-    choosing_tokens_amount = State()
 
 # --- ФУНКЦИИ ЗАГРУЗКИ ---
 def get_categories():
@@ -182,12 +122,28 @@ def get_categories():
 def get_config(category):
     path = os.path.join(TEMPLATES_DIR, category, "coo.txt")
     config = []
-    if not os.path.exists(path): return None
+    has_scode = False
+    scode_position = -1  # Позиция, с которой начинаются scode строки
+    
+    if not os.path.exists(path): return None, False, -1
+    
     try:
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
+            lines = f.readlines()
+            line_num = 0
+            for line in lines:
                 line = line.split('#')[0].strip()
-                if not line: continue
+                if not line: 
+                    line_num += 1
+                    continue
+                
+                # Проверяем наличие метки scode
+                if line.lower() == 'scode':
+                    has_scode = True
+                    scode_position = line_num  # Запоминаем позицию
+                    line_num += 1
+                    continue
+                
                 vals = [float(x.strip()) for x in line.split(',')]
                 config.append({
                     "coord": (vals[0], vals[1]),
@@ -198,20 +154,32 @@ def get_config(category):
                     "width": int(vals[8]),
                     "spacing": vals[9],
                     "lines": int(vals[10]),
-                    "blur": vals[11] if len(vals) > 11 else 0.25
+                    "blur": vals[11] if len(vals) > 11 else 0.25,
+                    "line_num": line_num  # Добавляем номер строки для отслеживания
                 })
-        return config
+                line_num += 1
+        return config, has_scode, scode_position
     except Exception as e:
         print(f"Ошибка загрузки конфига: {e}")
-        return None
+        return None, False, -1
 
 def get_font_path(category, font_type="1"):
+    """Получает путь к шрифту. font_type может быть "1", "2", "3", "num" и т.д."""
     exts = ['.ttf', '.otf', '.TTF', '.OTF']
     folder = os.path.join(FONTS_DIR, category)
     if not os.path.exists(folder): return None
+    
+    # Пробуем разные расширения
     for ext in exts:
         path = os.path.join(folder, font_type + ext)
-        if os.path.exists(path): return path
+        if os.path.exists(path): 
+            return path
+    
+    # Если шрифт с конкретным номером не найден, пробуем найти любой с таким именем
+    for file in os.listdir(folder):
+        if file.startswith(font_type) and file.lower().endswith(('.ttf', '.otf')):
+            return os.path.join(folder, file)
+    
     return None
 
 def format_passport_number(text):
@@ -220,39 +188,109 @@ def format_passport_number(text):
         return f"{clean[:2]} {clean[2:4]} {clean[4:]}"
     return text
 
+# --- ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ SCODE СТРОК ---
+def generate_scode_lines(data):
+    """
+    Генерирует две строки в формате scode из 10 строк данных
+    data: список из 10 строк введенных пользователем
+    """
+    # Извлекаем данные
+    lastname = data[0].strip().upper()  # Фамилия
+    firstname = data[1].strip().upper()  # Имя
+    patronymic = data[2].strip().upper()  # Отчество
+    birth_date = data[3].strip()  # Дата рождения (ДД.ММ.ГГГГ)
+    gender = data[5].strip().upper()  # Пол
+    issue_date = data[7].strip()  # Дата выдачи (ДД.ММ.ГГГГ)
+    department_code = data[8].strip().replace("-", "").replace(" ", "")  # Код подразделения (000-000)
+    passport_number = data[9].strip().replace(" ", "")  # Серия и номер (10 цифр)
+    
+    # Парсим даты
+    birth_day, birth_month, birth_year = birth_date.split('.')
+    issue_day, issue_month, issue_year = issue_date.split('.')
+    
+    # Формируем первую строку
+    # PNRUSBUSORGIN<<ALEKSEQ<ALEKSEEVI3<<<<<<<<<<<
+    # Фамилия не должна быть длиннее 9 символов для формата
+    if len(lastname) > 9:
+        lastname = lastname[:9]
+    
+    # Имя не должно быть длиннее 7 символов
+    if len(firstname) > 7:
+        firstname = firstname[:7]
+    
+    # Отчество не должно быть длиннее 8 символов + 1 для цифры
+    if len(patronymic) > 8:
+        patronymic = patronymic[:8]
+    
+    line1 = f"PNRUS{lastname}<<{firstname}<{patronymic}3"
+    # Добавляем <<<<< до нужной длины
+    line1 = line1.ljust(44, '<')
+    
+    # Формируем вторую строку
+    # 0113589573RUS9707302M<<<<<<<7170807220070<72
+    
+    # Серия и номер (10 цифр)
+    if len(passport_number) > 10:
+        passport_number = passport_number[:10]
+    elif len(passport_number) < 10:
+        passport_number = passport_number.ljust(10, '0')
+    
+    # Дата рождения в формате YYMMDD
+    birth_short = f"{birth_year[-2:]}{birth_month}{birth_day}"
+    
+    # Дата выдачи в формате YYMMDD
+    issue_short = f"{issue_year[-2:]}{issue_month}{issue_day}"
+    
+    # Код подразделения (6 цифр)
+    if len(department_code) > 6:
+        department_code = department_code[:6]
+    elif len(department_code) < 6:
+        department_code = department_code.ljust(6, '0')
+    
+    # Генерируем рандомные 2 цифры
+    random_digits = f"{random.randint(0, 99):02d}"
+    
+    line2 = f"{passport_number}RUS{birth_short}{gender[0]}{'<' * 7}7{issue_short}{department_code}<{random_digits}"
+    
+    # Дополняем до 44 символов
+    line2 = line2.ljust(44, '<')
+    
+    return [line1, line2]
+
 # --- ГЕНЕРАЦИЯ РАНДОМНЫХ ДАННЫХ ---
 def generate_random_data():
     first_names = ["АЛЕКСАНДР", "ДМИТРИЙ", "МАКСИМ", "СЕРГЕЙ", "АНДРЕЙ", "АЛЕКСЕЙ", "ИВАН", "ЕВГЕНИЙ", "МИХАИЛ", "ВЛАДИМИР"]
     last_names = ["ИВАНОВ", "ПЕТРОВ", "СИДОРОВ", "СМИРНОВ", "КУЗНЕЦОВ", "ПОПОВ", "ВАСИЛЬЕВ", "ЗАЙЦЕВ", "СОКОЛОВ", "МИХАЙЛОВ"]
     patronymics = ["АЛЕКСАНДРОВИЧ", "ДМИТРИЕВИЧ", "МАКСИМОВИЧ", "СЕРГЕЕВИЧ", "АНДРЕЕВИЧ", "АЛЕКСЕЕВИЧ", "ИВАНОВИЧ", "ЕВГЕНЬЕВИЧ", "МИХАЙЛОВИЧ", "ВЛАДИМИРОВИЧ"]
-    birth_places = ["ГОР. МОСКВА", "ГОР. САНКТ-ПЕТЕРБУРГ", "ГОР. НОВОСИБИРСК", "ГОР. ЕКАТЕРИНБУРГ", "ГОР. КАЗАНЬ", "ГОР. НИЖНИЙ НОВГОРОД", "ГОР. ЧЕЛЯБИНСК", "ГОР. САМАРА", "ГОР. ОМСК", "ГОР. РОСТОВ-НА-ДОНУ"]
+    birth_places = ["ГОР. МОСКВА", "ГОР. САНКТ-ПЕТЕРБУРГ", "ГОР. НОВОСИБИРСК", "ГОР. ЕКАТЕРИНБУРГ", "ГОР. КАЗАНЬ"]
     issued_by = [
         "ОТДЕЛОМ ВНУТРЕННИХ ДЕЛ ГОР. МОСКВЫ",
         "УПРАВЛЕНИЕМ ВНУТРЕННИХ ДЕЛ ПО ЦАО",
-        "ОТДЕЛОМ ВНУТРЕННИХ ДЕЛ ГОР. САНКТ-ПЕТЕРБУРГА",
-        "МВД ПО РЕСПУБЛИКЕ ТАТАРСТАН",
-        "ГУ МВД ПО КРАСНОДАРСКОМУ КРАЮ"
+        "ОТДЕЛОМ ВНУТРЕННИХ ДЕЛ ГОР. САНКТ-ПЕТЕРБУРГА"
     ]
     
-    year = random.randint(1950, 2000)
+    year = random.randint(1970, 2000)
     month = random.randint(1, 12)
     day = random.randint(1, 28)
     birth_date = f"{day:02d}.{month:02d}.{year}"
     
-    issue_year = year + random.randint(18, 45)
+    issue_year = year + random.randint(18, 25)
     issue_date = f"{random.randint(1, 28):02d}.{random.randint(1, 12):02d}.{issue_year}"
     
+    # Генерируем 10-значный номер паспорта
+    passport_num = f"{random.randint(1000, 9999)}{random.randint(100000, 999999)}"
+    
     return [
-        random.choice(last_names),
-        random.choice(first_names),
-        random.choice(patronymics),
+        random.choice(last_names)[:9],  # Обрезаем для формата
+        random.choice(first_names)[:7],
+        random.choice(patronymics)[:8],
         birth_date,
         random.choice(birth_places),
-        random.choice(["МУЖ.", "ЖЕН."]),
+        random.choice(["М", "Ж"]),
         random.choice(issued_by),
         issue_date,
-        f"{random.randint(100, 999):03d}-{random.randint(100, 999):03d}",
-        f"{random.randint(1000, 9999)} {random.randint(100000, 999999)}"
+        f"{random.randint(100, 999):03d}{random.randint(100, 999):03d}",  # Без дефиса
+        passport_num[:10]
     ]
 
 # --- ВОДЯНЫЕ ЗНАКИ ---
@@ -261,7 +299,7 @@ def add_watermarks(image):
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
     
-    watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ", "DEMO VERSION"]
+    watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ"]
     
     try:
         font_path = os.path.join(FONTS_DIR, "arial.ttf")
@@ -274,64 +312,43 @@ def add_watermarks(image):
             font_path = font_files[0] if font_files else None
         
         if font_path:
-            font_size = 40
-            font = ImageFont.truetype(font_path, font_size)
+            font = ImageFont.truetype(font_path, 40)
         else:
             font = ImageFont.load_default()
     except:
         font = ImageFont.load_default()
     
     width, height = watermarked.size
-    
     spacing = 100
-    opacity_range = (40, 70)
     
     for y in range(-height, height * 2, spacing):
         for x in range(-width, width * 2, spacing * 2):
             text = random.choice(watermark_texts)
-            
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            
             angle = random.randint(-30, 30)
             
-            txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
+            txt_img = Image.new("RGBA", (300, 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
-            
-            txt_draw.text((50, 50), text, font=font, 
-                         fill=(255, 255, 255, random.randint(opacity_range[0], opacity_range[1])), 
-                         anchor="mm")
-            
+            txt_draw.text((150, 50), text, font=font, fill=(255, 255, 255, 50), anchor="mm")
             txt_img = txt_img.rotate(angle, expand=1, resample=Image.BICUBIC)
             
             watermark_layer.alpha_composite(txt_img, (x + random.randint(-50, 50), y + random.randint(-50, 50)))
-    
-    for _ in range(500):
-        x = random.randint(0, width - 1)
-        y = random.randint(0, height - 1)
-        draw.point((x, y), fill=(255, 255, 255, random.randint(50, 90)))
-    
-    for _ in range(50):
-        x1 = random.randint(0, width)
-        y1 = random.randint(0, height)
-        x2 = random.randint(0, width)
-        y2 = random.randint(0, height)
-        draw.line([(x1, y1), (x2, y2)], 
-                 fill=(255, 255, 255, random.randint(25, 45)),
-                 width=random.randint(1, 3))
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
-async def create_preview_with_watermark(category, template_name, random_data):
+async def create_preview_with_watermark(category, template_name, random_data, has_scode=False, scode_position=-1):
     try:
-        config = get_config(category)
+        config, _, _ = get_config(category)
         if not config:
             return None
             
-        f1, f2, f_num = get_font_path(category, "1"), get_font_path(category, "2"), get_font_path(category, "num")
+        # Загружаем все необходимые шрифты
+        f1 = get_font_path(category, "1")
+        f2 = get_font_path(category, "2")
+        f3 = get_font_path(category, "3")  # Шрифт для scode
+        f_num = get_font_path(category, "num")
+        
         if not f1:
             return None
         
@@ -339,21 +356,31 @@ async def create_preview_with_watermark(category, template_name, random_data):
         with Image.open(template_path) as img:
             img = img.convert("RGBA")
             
-            for i in range(min(10, len(config))):
-                cfg = config[i]
-                text = random_data[i]
-                if i == 9:
-                    text = format_passport_number(text)
-                    curr_f = f_num if f_num else f1
-                elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
-                    curr_f = f2
-                else: 
-                    curr_f = f1
-                
-                font = ImageFont.truetype(curr_f, cfg["size"])
-                process_field(img, text, font, cfg)
-                if i == 9 and len(config) > 10:
-                    process_field(img, text, font, config[10])
+            # Если есть scode, генерируем специальные строки
+            if has_scode:
+                scode_lines = generate_scode_lines(random_data)
+                # Добавляем scode строки в конец данных
+                display_data = random_data + scode_lines
+            else:
+                display_data = random_data
+            
+            for i, cfg in enumerate(config):
+                if i < len(display_data):
+                    text = str(display_data[i])
+                    
+                    # Определяем шрифт
+                    if has_scode and i >= scode_position and f3:
+                        # Для scode строк используем шрифт 3
+                        curr_f = f3
+                    elif i == 9:  # Серия и номер
+                        curr_f = f_num if f_num else f1
+                    elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
+                        curr_f = f2
+                    else: 
+                        curr_f = f1
+                    
+                    font = ImageFont.truetype(curr_f, cfg["size"])
+                    process_field(img, text, font, cfg)
             
             img_with_watermarks = add_watermarks(img)
             
@@ -426,77 +453,172 @@ def process_field(img, text, font, config):
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     
-    user_id = message.from_user.id
-    add_user(user_id)
-    
-    tokens = get_user_tokens(user_id)
-    if user_id in ADMIN_IDS:
-        balance_text = "♾️ Бесконечно (админ)"
-    else:
-        balance_text = f"💰 Баланс: {tokens} токенов"
-    
     categories = get_categories()
     if not categories: 
-        return await message.answer("Папка templates пуста!")
-    
-    buy_button = InlineKeyboardButton(text="💎 Купить токены", callback_data="buy_menu")
+        return await message.answer("❌ Папка templates пуста!")
     
     kb = [[InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"cat_{cat}")] for cat in categories]
-    kb.append([buy_button])
     
     await message.answer(
-        f"<b>Выберите категорию:</b>\n{balance_text}", 
+        f"<b>Выберите категорию документа:</b>\n\n"
+        f"💰 Стоимость: {PRICE_PER_PHOTO} USDT за фото",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), 
         parse_mode="HTML"
     )
     await state.set_state(Form.choosing_category)
 
-@dp.callback_query(F.data == "buy_menu")
-async def buy_menu(call: types.CallbackQuery, state: FSMContext):
-    if not crypto:
-        await call.message.edit_text(
-            "<b>❌ Платежная система временно недоступна</b>\n\n"
-            "Пожалуйста, обратитесь к администратору для покупки токенов.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_categories")
-            ]]),
+@dp.callback_query(F.data.startswith("cat_"))
+async def choose_cat(call: types.CallbackQuery, state: FSMContext):
+    category = call.data.split("_")[1]
+    cat_path = os.path.join(TEMPLATES_DIR, category)
+    tpls = sorted([f for f in os.listdir(cat_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+    
+    if not tpls: 
+        return await call.answer("❌ Нет шаблонов!", show_alert=True)
+    
+    # Получаем конфиг и проверяем наличие scode
+    _, has_scode, scode_position = get_config(category)
+    
+    await state.update_data(
+        category=category, 
+        tpls=tpls, 
+        current_index=0,
+        has_scode=has_scode,
+        scode_position=scode_position
+    )
+    
+    random_data = generate_random_data()
+    await state.update_data(preview_data=random_data)
+    
+    # Создаем предпросмотр
+    preview_buf = await create_preview_with_watermark(category, tpls[0], random_data, has_scode, scode_position)
+    
+    if preview_buf:
+        total_templates = len(tpls)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="⬅️", callback_data="p_0"),
+            InlineKeyboardButton(text=f"✅ Выбрать (1/{total_templates})", callback_data="s_0"),
+            InlineKeyboardButton(text="➡️", callback_data="n_0")
+        ]])
+        
+        scode_info = "\n\n<i>⚠️ В этом разделе используется специальный формат строк (шрифт 3.ttf/otf)</i>" if has_scode else ""
+        
+        await call.message.answer_photo(
+            BufferedInputFile(preview_buf.read(), filename="preview.jpg"),
+            caption=f"📋 <b>Категория:</b> {category}\n"
+                    f"🖼 <b>Шаблон:</b> {tpls[0]} (1/{total_templates})\n\n"
+                    f"<i>⚠️ На предпросмотре водяные знаки и тестовые данные</i>"
+                    f"{scode_info}",
+            reply_markup=kb,
             parse_mode="HTML"
         )
-        await call.answer()
-        return
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 токен (2 USDT)", callback_data="buy_1")],
-        [InlineKeyboardButton(text="5 токенов (10 USDT)", callback_data="buy_5")],
-        [InlineKeyboardButton(text="10 токенов (20 USDT)", callback_data="buy_10")],
-        [InlineKeyboardButton(text="25 токенов (50 USDT)", callback_data="buy_25")],
-        [InlineKeyboardButton(text="50 токенов (100 USDT)", callback_data="buy_50")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_categories")]
-    ])
-    
-    await call.message.edit_text(
-        "<b>💎 Покупка токенов</b>\n\n"
-        f"Цена: <b>{TOKEN_PRICE_USDT} USDT</b> за 1 токен\n\n"
-        "Выберите количество токенов для покупки:",
-        reply_markup=kb,
-        parse_mode="HTML"
-    )
-    await state.set_state(Form.choosing_tokens_amount)
+    await state.set_state(Form.browsing_templates)
     await call.answer()
 
-@dp.callback_query(F.data.startswith("buy_"))
-async def process_buy(call: types.CallbackQuery, state: FSMContext):
-    amount = int(call.data.split("_")[1])
-    user_id = call.from_user.id
+@dp.callback_query(F.data.startswith(("p_", "n_", "s_")))
+async def nav_callback(call: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    category, tpls = data.get("category"), data.get("tpls")
+    has_scode = data.get("has_scode", False)
+    scode_position = data.get("scode_position", -1)
+    
+    if not category or not tpls: 
+        return await call.answer("Сессия истекла! Введите /start", show_alert=True)
+    
+    act, idx = call.data.split("_")
+    idx = int(idx)
+    total_templates = len(tpls)
+    
+    if act == "s":
+        await state.update_data(chosen_tpl=tpls[idx])
+        
+        random_data = data.get("preview_data", generate_random_data())
+        
+        guide = (
+            "<b>Введите 10 строк данных для заполнения:</b>\n\n"
+            "<blockquote>"
+            "1. Фамилия (макс 9 символов)\n2. Имя (макс 7 символов)\n3. Отчество (макс 8 символов)\n"
+            "4. Дата рождения (ДД.ММ.ГГГГ)\n5. Место рождения\n6. Пол (М или Ж)\n"
+            "7. Кем выдан документ\n8. Дата выдачи (ДД.ММ.ГГГГ)\n"
+            "9. Код подразделения (6 цифр, без дефиса)\n10. Серия и номер (10 цифр)"
+            "</blockquote>\n"
+        )
+        
+        if has_scode:
+            guide += (
+                "\n<b>⚠️ В этом разделе будут сгенерированы две дополнительные строки</b>\n"
+                "в специальном формате после основных данных.\n"
+                "<b>Шрифт для этих строк: 3.ttf или 3.otf</b>\n\n"
+            )
+        
+        guide += (
+            "<b>Пример заполнения (можно отредактировать):</b>\n"
+            "<blockquote>"
+            f"{random_data[0]}\n{random_data[1]}\n{random_data[2]}\n{random_data[3]}\n"
+            f"{random_data[4]}\n{random_data[5]}\n{random_data[6]}\n{random_data[7]}\n"
+            f"{random_data[8]}\n{random_data[9]}"
+            "</blockquote>"
+        )
+        
+        await call.message.answer(guide, parse_mode="HTML")
+        
+        ready_text = "\n".join(random_data)
+        await call.message.answer(
+            f"<b>Готовые данные для копирования:</b>\n<code>{ready_text}</code>",
+            parse_mode="HTML"
+        )
+        
+        await state.set_state(Form.inputting_data)
+    else:
+        if act == "p":
+            new_idx = (idx - 1) % total_templates
+        else:
+            new_idx = (idx + 1) % total_templates
+        
+        await state.update_data(current_index=new_idx)
+        
+        random_data = generate_random_data()
+        await state.update_data(preview_data=random_data)
+        
+        preview_buf = await create_preview_with_watermark(category, tpls[new_idx], random_data, has_scode, scode_position)
+        
+        if preview_buf:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="⬅️", callback_data=f"p_{new_idx}"),
+                InlineKeyboardButton(text=f"✅ Выбрать ({new_idx+1}/{total_templates})", callback_data=f"s_{new_idx}"),
+                InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")
+            ]])
+            
+            await call.message.delete()
+            await call.message.answer_photo(
+                BufferedInputFile(preview_buf.read(), filename="preview.jpg"),
+                caption=f"📋 <b>Категория:</b> {category}\n"
+                        f"🖼 <b>Шаблон:</b> {tpls[new_idx]} ({new_idx+1}/{total_templates})\n\n"
+                        f"<i>⚠️ На предпросмотре водяные знаки и тестовые данные</i>",
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+    
+    await call.answer()
+
+@dp.message(Form.inputting_data)
+async def process_data(message: types.Message, state: FSMContext):
+    lines = [l.strip() for l in message.text.split('\n') if l.strip()]
+    if len(lines) < 10: 
+        return await message.answer(f"⚠️ Нужно 10 строк! Сейчас {len(lines)}")
+    
+    data = await state.get_data()
+    category = data['category']
+    template = data['chosen_tpl']
+    has_scode = data.get('has_scode', False)
+    scode_position = data.get('scode_position', -1)
+    
+    # Сохраняем введенные данные
+    user_data = "\n".join(lines)
     
     if not crypto:
-        await call.message.edit_text(
-            "❌ Платежная система недоступна. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")
-            ]])
-        )
-        await call.answer()
+        await message.answer("❌ Платежная система недоступна. Попробуйте позже.")
         return
     
     # Генерируем уникальный ID платежа
@@ -504,16 +626,14 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
     
     try:
         # Создаем инвойс в CryptoBot
-        amount_usdt = amount * TOKEN_PRICE_USDT
-        
         invoice = await crypto.create_invoice(
             asset='USDT',
-            amount=amount_usdt,
-            description=f"Покупка {amount} токенов",
+            amount=PRICE_PER_PHOTO,
+            description=f"Генерация фото в категории {category}",
             payload=payment_id
         )
         
-        # Получаем URL для оплаты (разные версии библиотеки)
+        # Получаем URL для оплаты
         if hasattr(invoice, 'pay_url'):
             pay_url = invoice.pay_url
         elif hasattr(invoice, 'url'):
@@ -532,23 +652,21 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
             raise Exception("Не удалось найти ID инвойса")
         
         # Сохраняем запись о платеже
-        create_payment_record(user_id, amount, payment_id, invoice_id)
+        create_payment_record(payment_id, message.from_user.id, invoice_id, category, template, user_data)
         
         # Создаем клавиатуру с кнопкой для оплаты
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
-            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_payment_{payment_id}")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")]
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{payment_id}")]
         ])
         
-        await call.message.edit_text(
+        await message.answer(
             f"<b>💳 Счет на оплату</b>\n\n"
-            f"Токенов: <b>{amount}</b>\n"
-            f"Сумма: <b>{amount_usdt} USDT</b>\n\n"
+            f"Сумма: <b>{PRICE_PER_PHOTO} USDT</b>\n\n"
             f"ID платежа: <code>{payment_id}</code>\n\n"
             "1. Нажмите кнопку \"Оплатить\"\n"
             "2. Оплатите счет в @CryptoBot\n"
-            "3. Нажмите \"Проверить оплату\" для проверки",
+            "3. Нажмите \"Я оплатил\" для получения фото",
             reply_markup=kb,
             parse_mode="HTML"
         )
@@ -557,14 +675,7 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
         
     except Exception as e:
         logging.error(f"Error creating invoice: {e}")
-        await call.message.edit_text(
-            f"❌ Ошибка при создании счета: {str(e)}\n\nПопробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")
-            ]])
-        )
-    
-    await call.answer()
+        await message.answer(f"❌ Ошибка при создании счета: {str(e)}\n\nПопробуйте позже.")
 
 @dp.callback_query(F.data.startswith("check_payment_"))
 async def check_payment(call: types.CallbackQuery, state: FSMContext):
@@ -583,49 +694,102 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             await call.answer("Платеж не найден!", show_alert=True)
             return
         
-        db_user_id, amount_tokens, invoice_id, status = payment_info
+        db_user_id, category, template, user_data, status = payment_info
         
         if db_user_id != user_id:
             await call.answer("Это не ваш платеж!", show_alert=True)
             return
         
         if status == "completed":
-            await call.answer("Платеж уже обработан! Токены зачислены.", show_alert=True)
-            await cmd_start(call.message, state)
+            await call.answer("Платеж уже обработан!", show_alert=True)
             return
         
         # Получаем инвойс по ID
-        try:
-            invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
-            invoice = invoices[0] if invoices else None
-        except:
-            try:
-                invoice = await crypto.get_invoice(invoice_id=invoice_id)
-            except:
-                invoice = None
+        invoice_id = None
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT invoice_id FROM payments WHERE payment_id = ?", (payment_id,))
+        result = cursor.fetchone()
+        conn.close()
         
-        if invoice:
-            # Получаем статус
-            invoice_status = getattr(invoice, 'status', None)
+        if result:
+            invoice_id = result[0]
+        
+        if invoice_id:
+            try:
+                invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
+                invoice = invoices[0] if invoices else None
+            except:
+                try:
+                    invoice = await crypto.get_invoice(invoice_id=invoice_id)
+                except:
+                    invoice = None
             
-            if invoice_status == 'paid':
-                # Платеж подтвержден
+            if invoice and getattr(invoice, 'status', None) == 'paid':
+                # Платеж подтвержден - генерируем фото
                 update_payment_status(payment_id, "completed")
-                add_tokens(user_id, amount_tokens)
                 
-                new_balance = get_user_tokens(user_id)
+                # Разбираем сохраненные данные
+                data_lines = user_data.split('\n')
                 
-                await call.message.edit_text(
-                    f"✅ <b>Оплата подтверждена!</b>\n\n"
-                    f"Зачислено: <b>{amount_tokens} токенов</b>\n"
-                    f"Новый баланс: <b>{new_balance} токенов</b>\n\n"
-                    f"Спасибо за покупку!",
-                    parse_mode="HTML"
-                )
+                # Загружаем конфиг
+                config, has_scode, scode_position = get_config(category)
+                if not config:
+                    await call.message.edit_text("❌ Ошибка загрузки конфигурации")
+                    return
                 
-                await asyncio.sleep(3)
-                await cmd_start(call.message, state)
-                return
+                # Загружаем шрифты
+                f1 = get_font_path(category, "1")
+                f2 = get_font_path(category, "2")
+                f3 = get_font_path(category, "3")
+                f_num = get_font_path(category, "num")
+                
+                if not f1:
+                    await call.message.edit_text("❌ Не найден основной шрифт")
+                    return
+                
+                template_path = os.path.join(TEMPLATES_DIR, category, template)
+                with Image.open(template_path) as img:
+                    img = img.convert("RGBA")
+                    
+                    # Если есть scode, генерируем специальные строки
+                    if has_scode:
+                        scode_lines = generate_scode_lines(data_lines)
+                        display_data = data_lines + scode_lines
+                    else:
+                        display_data = data_lines
+                    
+                    for i, cfg in enumerate(config):
+                        if i < len(display_data):
+                            text = str(display_data[i])
+                            
+                            # Определяем шрифт
+                            if has_scode and i >= scode_position and f3:
+                                curr_f = f3
+                            elif i == 9:
+                                curr_f = f_num if f_num else f1
+                            elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
+                                curr_f = f2
+                            else: 
+                                curr_f = f1
+                            
+                            font = ImageFont.truetype(curr_f, cfg["size"])
+                            process_field(img, text, font, cfg)
+                    
+                    # Сохраняем результат
+                    res = img.convert("RGB")
+                    buf = BytesIO()
+                    res.save(buf, format="JPEG", quality=95)
+                    buf.seek(0)
+                    
+                    await call.message.delete()
+                    await call.message.answer_photo(
+                        BufferedInputFile(buf.read(), filename="result.jpg"),
+                        caption="✅ Ваше фото готово! Спасибо за покупку."
+                    )
+                    
+                    await state.clear()
+                    return
         
         await call.answer("❌ Платеж еще не обнаружен. Оплатите счет и нажмите снова.", show_alert=True)
             
@@ -633,368 +797,33 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
         logging.error(f"Error checking payment: {e}")
         await call.answer(f"Ошибка при проверке платежа: {str(e)}", show_alert=True)
 
-@dp.callback_query(F.data == "back_to_categories")
-async def back_to_categories(call: types.CallbackQuery, state: FSMContext):
-    await cmd_start(call.message, state)
-    await call.answer()
-
-@dp.callback_query(F.data.startswith("cat_"))
-async def choose_cat(call: types.CallbackQuery, state: FSMContext):
-    category = call.data.split("_")[1]
-    cat_path = os.path.join(TEMPLATES_DIR, category)
-    tpls = sorted([f for f in os.listdir(cat_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
-    if not tpls: 
-        return await call.answer("Нет фото!", show_alert=True)
-    
-    await state.update_data(category=category, tpls=tpls, current_index=0)
-    
-    random_data = generate_random_data()
-    await state.update_data(preview_data=random_data)
-    
-    preview_buf = await create_preview_with_watermark(category, tpls[0], random_data)
-    
-    if preview_buf:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⬅️", callback_data="p_0"),
-            InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
-            InlineKeyboardButton(text="➡️", callback_data="n_0")
-        ]])
-        
-        await call.message.answer_photo(
-            BufferedInputFile(preview_buf.read(), filename="preview.jpg"),
-            caption=f"📋 <b>Категория:</b> {category}\n"
-                    f"🖼 <b>Шаблон:</b> {tpls[0]}\n\n"
-                    f"<i>⚠️ На предпросмотре водяные знаки и тестовые данные</i>\n"
-                    f"<i>✅ Готовый результат будет без водяных знаков</i>",
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
-    else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="⬅️", callback_data="p_0"),
-            InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
-            InlineKeyboardButton(text="➡️", callback_data="n_0")
-        ]])
-        
-        await call.message.answer_photo(
-            FSInputFile(os.path.join(cat_path, tpls[0])),
-            caption=f"📋 <b>Категория:</b> {category}\n🖼 <b>Шаблон:</b> {tpls[0]}",
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
-    
-    await state.set_state(Form.browsing_templates)
-    await call.answer()
-
-@dp.callback_query(F.data.startswith(("p_", "n_", "s_")))
-async def nav_callback(call: types.CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    category, tpls = data.get("category"), data.get("tpls")
-    
-    if not category or not tpls: 
-        return await call.answer("Сессия истекла! Введите /start", show_alert=True)
-    
-    act, idx = call.data.split("_")
-    idx = int(idx)
-    
-    if act == "s":
-        await state.update_data(chosen_tpl=tpls[idx])
-        
-        user_id = call.from_user.id
-        tokens = get_user_tokens(user_id)
-        
-        if user_id not in ADMIN_IDS and tokens < 1:
-            await call.message.answer(
-                "❌ У вас недостаточно токенов!\n\n"
-                f"1 токен = {TOKEN_PRICE_USDT} USDT\n"
-                "Купить можно в главном меню.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="💎 Купить токены", callback_data="buy_menu")
-                ]])
-            )
-            await state.set_state(Form.choosing_category)
-            await call.answer()
-            return
-        
-        random_data = data.get("preview_data", generate_random_data())
-        
-        guide = (
-            "<b>Введите 10 строк данных для заполнения:</b>\n\n"
-            "<blockquote>"
-            "1. Фамилия\n2. Имя\n3. Отчество\n4. Дата рождения (ДД.ММ.ГГГГ)\n"
-            "5. Место рождения\n6. Пол (МУЖ. или ЖЕН.)\n7. Кем выдан документ\n"
-            "8. Дата выдачи (ДД.ММ.ГГГГ)\n9. Код подразделения (000-000)\n10. Серия и номер"
-            "</blockquote>\n"
-            "<b>Пример заполнения (можно отредактировать):</b>\n"
-            "<blockquote>"
-            f"{random_data[0]}\n"
-            f"{random_data[1]}\n"
-            f"{random_data[2]}\n"
-            f"{random_data[3]}\n"
-            f"{random_data[4]}\n"
-            f"{random_data[5]}\n"
-            f"{random_data[6]}\n"
-            f"{random_data[7]}\n"
-            f"{random_data[8]}\n"
-            f"{random_data[9]}"
-            "</blockquote>"
-        )
-        
-        await call.message.answer(guide, parse_mode="HTML")
-        
-        ready_text = "\n".join(random_data)
-        await call.message.answer(
-            f"<b>Готовые данные для копирования:</b>\n<code>{ready_text}</code>",
-            parse_mode="HTML"
-        )
-        
-        await state.set_state(Form.inputting_data)
-    else:
-        if act == "p":
-            new_idx = (idx - 1) % len(tpls)
-        else:
-            new_idx = (idx + 1) % len(tpls)
-        
-        await state.update_data(current_index=new_idx)
-        
-        random_data = generate_random_data()
-        await state.update_data(preview_data=random_data)
-        
-        preview_buf = await create_preview_with_watermark(category, tpls[new_idx], random_data)
-        
-        if preview_buf:
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="⬅️", callback_data=f"p_{new_idx}"),
-                InlineKeyboardButton(text="✅ Выбрать", callback_data=f"s_{new_idx}"),
-                InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")
-            ]])
-            
-            await call.message.delete()
-            await call.message.answer_photo(
-                BufferedInputFile(preview_buf.read(), filename="preview.jpg"),
-                caption=f"📋 <b>Категория:</b> {category}\n"
-                        f"🖼 <b>Шаблон:</b> {tpls[new_idx]}\n\n"
-                        f"<i>⚠️ На предпросмотре водяные знаки и тестовые данные</i>\n"
-                        f"<i>✅ Готовый результат будет без водяных знаков</i>",
-                reply_markup=kb,
-                parse_mode="HTML"
-            )
-        else:
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
-                InlineKeyboardButton(text="⬅️", callback_data=f"p_{new_idx}"),
-                InlineKeyboardButton(text="✅ Выбрать", callback_data=f"s_{new_idx}"),
-                InlineKeyboardButton(text="➡️", callback_data=f"n_{new_idx}")
-            ]])
-            
-            await call.message.edit_media(
-                InputMediaPhoto(
-                    media=FSInputFile(os.path.join(TEMPLATES_DIR, category, tpls[new_idx])),
-                    caption=f"📋 <b>Категория:</b> {category}\n🖼 <b>Шаблон:</b> {tpls[new_idx]}",
-                    parse_mode="HTML"
-                ),
-                reply_markup=kb
-            )
-    await call.answer()
-
-@dp.message(Form.inputting_data)
-async def process_data(message: types.Message, state: FSMContext):
-    lines = [l.strip() for l in message.text.split('\n') if l.strip()]
-    if len(lines) < 10: 
-        return await message.answer(f"⚠️ Нужно 10 строк! Сейчас {len(lines)}")
-    
-    data = await state.get_data()
-    category = data['category']
-    config = get_config(category)
-    if not config:
-        return await message.answer("❌ Ошибка загрузки конфигурации шаблона")
-    
-    f1, f2, f_num = get_font_path(category, "1"), get_font_path(category, "2"), get_font_path(category, "num")
-    
-    if not f1:
-        return await message.answer("❌ Не найден шрифт для категории")
-    
-    user_id = message.from_user.id
-    
-    # Проверяем наличие токенов (админы пропускаются)
-    if user_id not in ADMIN_IDS:
-        tokens = get_user_tokens(user_id)
-        if tokens < 1:
-            await message.answer(
-                "❌ Недостаточно токенов!\n\n"
-                f"1 токен = {TOKEN_PRICE_USDT} USDT\n"
-                "Купить можно в главном меню.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(text="💎 Купить токены", callback_data="buy_menu")
-                ]])
-            )
-            await state.clear()
-            return
-
-    try:
-        template_path = os.path.join(TEMPLATES_DIR, category, data['chosen_tpl'])
-        with Image.open(template_path) as img:
-            img = img.convert("RGBA")
-            for i in range(min(10, len(config))):
-                cfg = config[i]
-                text = lines[i]
-                if i == 9:
-                    text = format_passport_number(text)
-                    curr_f = f_num if f_num else f1
-                elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
-                    curr_f = f2
-                else: 
-                    curr_f = f1
-                
-                font = ImageFont.truetype(curr_f, cfg["size"])
-                process_field(img, text, font, cfg)
-                if i == 9 and len(config) > 10:
-                    process_field(img, text, font, config[10])
-
-            # Не добавляем водяные знаки на финальный результат
-            res = img.convert("RGB")
-            buf = BytesIO()
-            res.save(buf, format="JPEG", quality=95)
-            buf.seek(0)
-            
-            # Списываем токен (админы пропускаются в функции deduct_token)
-            deduct_token(user_id)
-            
-            # Получаем актуальный баланс
-            new_balance = get_user_tokens(user_id)
-            
-            if user_id in ADMIN_IDS:
-                balance_msg = "✨ (админский режим)"
-            else:
-                balance_msg = f"✅ Токен списан. Остаток: {new_balance}"
-            
-            await message.answer_photo(
-                BufferedInputFile(buf.read(), filename="result.jpg"),
-                caption=f"✅ Готово! Без водяных знаков.\n{balance_msg}"
-            )
-            await state.clear()
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
-        logging.error(f"Error processing image: {e}")
-
-@dp.message(Command("balance"))
-async def cmd_balance(message: types.Message):
-    user_id = message.from_user.id
-    add_user(user_id)
-    tokens = get_user_tokens(user_id)
-    
-    if user_id in ADMIN_IDS:
-        await message.answer("♾️ У вас бесконечное количество токенов (админ)")
-    else:
-        await message.answer(f"💰 Ваш баланс: {tokens} токенов\n\n1 токен = {TOKEN_PRICE_USDT} USDT")
-
-@dp.message(Command("add_tokens"))
-async def cmd_add_tokens(message: types.Message):
-    user_id = message.from_user.id
-    
-    # Проверяем, является ли пользователь админом
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ У вас нет прав для этой команды")
-        return
-    
-    # Парсим аргументы: /add_tokens <user_id> <количество>
-    args = message.text.split()
-    if len(args) != 3:
-        await message.answer("Использование: /add_tokens <user_id> <количество>")
-        return
-    
-    try:
-        target_id = int(args[1])
-        amount = int(args[2])
-        
-        if amount <= 0:
-            await message.answer("Количество должно быть положительным")
-            return
-        
-        # Добавляем токены
-        add_tokens(target_id, amount)
-        
-        # Проверяем новый баланс
-        new_balance = get_user_tokens(target_id)
-        
-        await message.answer(
-            f"✅ Добавлено {amount} токенов пользователю {target_id}\n"
-            f"💰 Новый баланс: {new_balance} токенов"
-        )
-        
-        # Пробуем уведомить пользователя
-        try:
-            await bot.send_message(
-                target_id,
-                f"✅ Вам начислено {amount} токенов!\n"
-                f"💰 Текущий баланс: {new_balance} токенов"
-            )
-        except Exception as e:
-            logging.error(f"Не удалось уведомить пользователя {target_id}: {e}")
-            
-    except ValueError:
-        await message.answer("❌ Неверный формат чисел. Используйте: /add_tokens <user_id> <количество>")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка: {str(e)}")
-
-@dp.message(Command("get_balance"))
-async def cmd_get_balance(message: types.Message):
-    user_id = message.from_user.id
-    
-    # Проверяем, является ли пользователь админом
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ У вас нет прав для этой команды")
-        return
-    
-    # Парсим аргументы: /get_balance <user_id>
-    args = message.text.split()
-    if len(args) != 2:
-        await message.answer("Использование: /get_balance <user_id>")
-        return
-    
-    try:
-        target_id = int(args[1])
-        tokens = get_user_tokens(target_id)
-        
-        await message.answer(f"💰 Баланс пользователя {target_id}: {tokens} токенов")
-    except ValueError:
-        await message.answer("❌ Неверный формат ID")
-
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
+    """Статистика платежей (только для админов)"""
     user_id = message.from_user.id
     
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ У вас нет прав для этой команды")
+    # Простая проверка на админа (можно добавить свои ID)
+    if user_id not in [5153650495, 8225633174]:
         return
     
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    cursor.execute("SELECT COUNT(*) FROM users")
-    total_users = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM payments")
+    total_payments = cursor.fetchone()[0]
     
-    cursor.execute("SELECT SUM(tokens) FROM users")
-    total_tokens = cursor.fetchone()[0] or 0
+    cursor.execute("SELECT COUNT(*) FROM payments WHERE status = 'completed'")
+    completed_payments = cursor.fetchone()[0]
     
-    cursor.execute("SELECT user_id, tokens FROM users ORDER BY tokens DESC LIMIT 10")
-    top_users = cursor.fetchall()
-    
-    cursor.execute("SELECT COUNT(*), SUM(amount_usdt) FROM payments WHERE status = 'completed'")
-    payments_stats = cursor.fetchone()
-    total_payments = payments_stats[0] or 0
-    total_usdt = payments_stats[1] or 0
+    cursor.execute("SELECT SUM(amount_usdt) FROM payments WHERE status = 'completed'")
+    total_earned = cursor.fetchone()[0] or 0
     
     conn.close()
     
-    stats_text = f"📊 <b>Статистика</b>\n\n"
-    stats_text += f"👥 Всего пользователей: {total_users}\n"
-    stats_text += f"💎 Всего токенов: {total_tokens}\n"
-    stats_text += f"💳 Всего платежей: {total_payments}\n"
-    stats_text += f"💰 Всего USDT: {total_usdt:.2f}\n\n"
-    stats_text += "<b>Топ-10 пользователей:</b>\n"
-    
-    for i, (uid, tokens) in enumerate(top_users, 1):
-        stats_text += f"{i}. ID: {uid} — {tokens} токенов\n"
+    stats_text = f"📊 <b>Статистика платежей</b>\n\n"
+    stats_text += f"💰 Всего платежей: {total_payments}\n"
+    stats_text += f"✅ Успешных: {completed_payments}\n"
+    stats_text += f"💵 Заработано: {total_earned} USDT"
     
     await message.answer(stats_text, parse_mode="HTML")
 
