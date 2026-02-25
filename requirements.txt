@@ -2,4 +2,4 @@ aiogram
 Pillow
 aiohttp
 python-dotenv
-cryptopay
+aiocryptopay
