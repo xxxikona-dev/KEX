@@ -13,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, FSInputFile, BufferedInputFile
 from aiogram.client.session.aiohttp import AiohttpSession
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from dotenv import load_dotenv
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
@@ -79,8 +79,7 @@ def format_passport_number(text):
 
 # --- ЭФФЕКТЫ РЕАЛИЗМА ---
 
-def add_noise_to_layer(layer, intensity=15):
-    """Добавляет микро-зернистость на слой текста для эффекта печати"""
+def add_noise_to_layer(layer, intensity=12):
     width, height = layer.size
     pixels = layer.load()
     for y in range(height):
@@ -94,28 +93,19 @@ def add_noise_to_layer(layer, intensity=15):
 
 # --- ОТРИСОВКА ---
 
-def draw_text_on_layer(img, text, font, config, is_fio=False):
+def draw_text_on_layer(img, text, font, config):
     text = str(text).upper()
-    
-    # Авто-трекинг (расстояние между буквами) для ФИО
-    if is_fio:
-        text = " ".join(list(text.replace(" ", "")))
-
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
     txt_layer = Image.new("RGBA", (tw + 400, th + 400), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
-    
     fill_color = config["color"] + (config.get("alpha", 225),) 
     d.text(((tw + 400) // 2, (th + 400) // 2), text, font=font, fill=fill_color, anchor="mm")
     
-    # Эффект зернистости чернил
     txt_layer = add_noise_to_layer(txt_layer)
-    
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
-    
     if config.get("blur", 0) > 0:
         txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
 
@@ -124,7 +114,8 @@ def draw_text_on_layer(img, text, font, config, is_fio=False):
     offset_y = int(config["coord"][1] - (lh // 2))
     img.alpha_composite(txt_layer, (offset_x, offset_y))
 
-def process_field(img, text, font, config, is_fio=False):
+def process_field(img, text, font, config):
+    text = text.upper()
     if config.get("lines", 1) > 1:
         chars_limit = config.get("width", 30)
         max_lines = config.get("lines", 3)
@@ -132,15 +123,18 @@ def process_field(img, text, font, config, is_fio=False):
         
         base_x, base_y = config["coord"]
         line_step = config["size"] + config.get("spacing", 10) 
-        total_h = (len(lines) - 1) * line_step
-        start_y = base_y - (total_h // 2)
+        
+        # ФИКС: Текст всегда начинается с "первой строки" (base_y)
+        # При 3 строках base_y в coo.txt должен указывать на центр ВТОРОЙ строки.
+        # Чтобы начать с ПЕРВОЙ, мы вычитаем один шаг (line_step) от центра.
+        start_y = base_y - line_step
 
         for i, line in enumerate(lines):
             line_cfg = config.copy()
             line_cfg["coord"] = (base_x, start_y + (i * line_step))
-            draw_text_on_layer(img, line, font, line_cfg, is_fio=is_fio)
+            draw_text_on_layer(img, line, font, line_cfg)
     else:
-        draw_text_on_layer(img, text, font, config, is_fio=is_fio)
+        draw_text_on_layer(img, text, font, config)
 
 # --- ХЕНДЛЕРЫ ---
 
@@ -175,14 +169,25 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
 async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     category, tpls = data.get("category"), data.get("tpls")
-    if not category or not tpls: return await call.answer("Сессия истекла!", show_alert=True)
+    if not category or not tpls: return await call.answer("Сессия истекла! Введите /start", show_alert=True)
     act, idx = call.data.split("_")
     idx = int(idx)
     if act == "s":
         await state.update_data(chosen_tpl=tpls[idx])
-        guide = ("<b>Введите 10 строк данных:</b>\n\n"
-                 "<blockquote>1. Фамилия\n2. Имя\n3. Отчество\n4. Дата рожд.\n5. Место рожд.\n"
-                 "6. Пол\n7. Кем выдан\n8. Дата выд.\n9. Код подр.\n10. Серия и номер</blockquote>")
+        guide = (
+            "<b>Введите 10 строк данных для заполнения:</b>\n\n"
+            "<blockquote>"
+            "1. Фамилия\n2. Имя\n3. Отчество\n4. Дата рождения (ДД.ММ.ГГГГ)\n"
+            "5. Место рождения\n6. Пол (МУЖ. или ЖЕН.)\n7. Кем выдан документ\n"
+            "8. Дата выдачи (ДД.ММ.ГГГГ)\n9. Код подразделения (000-000)\n10. Серия и номер"
+            "</blockquote>\n"
+            "<b>Пример заполнения:</b>\n"
+            "<blockquote>"
+            "ЗУБОВ\nАЛЕКСАНДР\nИВАНОВИЧ\n04.09.1959\nГОР. ЕНИСЕЙСК\nМУЖ.\n"
+            "ОТДЕЛОМ ВНУТРЕННИХ ДЕЛ ГОР. ЕНИСЕЙСКА И ЕНИСЕЙСКОГО РАЙОНА\n"
+            "19.08.2005\n242-024\n0404 957231"
+            "</blockquote>"
+        )
         await call.message.answer(guide, parse_mode="HTML")
         await state.set_state(Form.inputting_data)
     else:
@@ -212,8 +217,6 @@ async def process_data(message: types.Message, state: FSMContext):
             for i in range(10):
                 cfg = config[i]
                 text = lines[i]
-                is_fio = i in [0, 1, 2] # Применяем трекинг для Фамилии, Имени, Отчества
-
                 if i == 9:
                     text = format_passport_number(text)
                     curr_f = f_num if f_num else f1
@@ -221,16 +224,15 @@ async def process_data(message: types.Message, state: FSMContext):
                 else: curr_f = f1
                 
                 font = ImageFont.truetype(curr_f, cfg["size"])
-                process_field(img, text, font, cfg, is_fio=is_fio)
-                
-                if i == 9 and len(config) > 10: # Дубликат номера
-                    process_field(img, text, font, config[10], is_fio=False)
+                process_field(img, text, font, cfg)
+                if i == 9 and len(config) > 10:
+                    process_field(img, text, font, config[10])
 
             res = img.convert("RGB")
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
             buf.seek(0)
-            await message.answer_photo(BufferedInputFile(buf.read(), filename="res.jpg"), caption="✅ Готово!")
+            await message.answer_photo(BufferedInputFile(buf.read(), filename="res.jpg"))
             await state.clear()
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
