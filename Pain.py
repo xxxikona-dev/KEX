@@ -437,6 +437,7 @@ def process_field(img, text, font, config):
         draw_text_on_layer(img, text, font, config)
 
 # --- ХЕНДЛЕРЫ ---
+
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -521,13 +522,13 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
         # Создаем инвойс в CryptoBot
         amount_usdt = amount * TOKEN_PRICE_USDT
         
-        # Создаем счет с помощью aiocryptopay
+        # Исправлено: expires_in (не expired_in)
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=amount_usdt,
             description=f"Покупка {amount} токенов",
-            payload=payment_id,  # Важно: этот payload вернется в webhook
-            expired_in=3600  # Счет действителен 1 час
+            payload=payment_id,
+            expires_in=3600  # Счет действителен 1 час (3600 секунд)
         )
         
         # Сохраняем информацию о счете
@@ -559,7 +560,7 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         logging.error(f"Error creating invoice: {e}")
         await call.message.edit_text(
-            "❌ Ошибка при создании счета. Попробуйте позже.",
+            f"❌ Ошибка при создании счета: {str(e)}\n\nПопробуйте позже.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")
             ]])
@@ -598,10 +599,10 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             await cmd_start(call.message, state)
             return
         
-        # Проверяем статус инвойса в CryptoBot
-        invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
+        # Получаем инвойс по ID
+        invoice = await crypto.get_invoices(invoice_ids=[invoice_id])
         
-        if invoices and invoices[0].status == 'paid':
+        if invoice and invoice[0].status == 'paid':
             # Платеж подтвержден
             update_payment_status(payment_id, "completed")
             add_tokens(user_id, amount_tokens)
@@ -623,7 +624,7 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             
     except Exception as e:
         logging.error(f"Error checking payment: {e}")
-        await call.answer("Ошибка при проверке платежа", show_alert=True)
+        await call.answer(f"Ошибка при проверке платежа: {str(e)}", show_alert=True)
 
 @dp.callback_query(F.data == "back_to_categories")
 async def back_to_categories(call: types.CallbackQuery, state: FSMContext):
@@ -944,12 +945,6 @@ async def cmd_stats(message: types.Message):
 async def cryptobot_webhook(request):
     """Обработка webhook уведомлений от CryptoBot"""
     try:
-        # Проверяем подпись запроса (если настроено)
-        signature = request.headers.get('crypto-pay-api-signature')
-        body = await request.text()
-        
-        # Здесь можно добавить проверку подписи с CRYPTOBOT_WEBHOOK_SECRET
-        
         data = await request.json()
         logging.info(f"Получен webhook от CryptoBot: {data}")
         
@@ -992,8 +987,8 @@ async def cryptobot_webhook(request):
 
 async def on_startup(app):
     """Действия при запуске приложения"""
-    # Устанавливаем webhook для бота (если используете)
-    webhook_url = f"{WEBHOOK_URL}/bot"
+    # Устанавливаем webhook для бота
+    webhook_url = f"{WEBHOOK_URL}/webhook/bot"
     await bot.set_webhook(webhook_url, drop_pending_updates=True)
     logging.info(f"Webhook для бота установлен: {webhook_url}")
 
@@ -1020,6 +1015,7 @@ def main():
     web.run_app(app, host='0.0.0.0', port=8080)
 
 if __name__ == "__main__":
+    # Проверяем, настроен ли WEBHOOK_URL
     if WEBHOOK_URL and WEBHOOK_URL != "https://your-domain.com/webhook/cryptobot":
         # Запуск с webhook
         main()
