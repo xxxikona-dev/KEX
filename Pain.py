@@ -20,31 +20,43 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 from dotenv import load_dotenv
 
 # Импорт для CryptoBot API
-from cryptopay import CryptoPay
-from cryptopax.types import Invoice
+try:
+    from cryptopay import CryptoPay
+    from cryptopay.types import Invoice
+    CRYPTOPAY_AVAILABLE = True
+except ImportError:
+    print("⚠️ Библиотека cryptopay не установлена. Установите: pip install cryptopay")
+    CRYPTOPAY_AVAILABLE = False
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-CRYPTOBOT_TOKEN = os.getenv("538436:AAz9j6rKbh84ZUeahJnNfvG82bBjDF1JgOZ")  # Токен от @CryptoBot
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")  # Токен от @CryptoBot
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 # ID администраторов (бесконечные токены)
-ADMIN_IDS = [5153650495, 7915847801]  # ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID
+ADMIN_IDS = [123456789, 987654321]  # ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID
 
 # Настройки CryptoBot
-CRYPTOBOT_API_URL = "https://pay.crypt.bot/"  # Основной URL
+CRYPTOBOT_API_URL = "https://pay.crypt.bot/api/"  # Основной URL
 TOKEN_PRICE_USDT = 2  # Цена одного токена в USDT
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 bot = Bot(token=TOKEN, session=AiohttpSession())
 dp = Dispatcher()
 
-# Инициализация CryptoBot
-crypto = CryptoPay(token=CRYPTOBOT_TOKEN, api_url=CRYPTOBOT_API_URL)
+# Инициализация CryptoBot (если библиотека доступна)
+crypto = None
+if CRYPTOPAY_AVAILABLE and CRYPTOBOT_TOKEN:
+    try:
+        crypto = CryptoPay(token=CRYPTOBOT_TOKEN, api_url=CRYPTOBOT_API_URL)
+        print("✅ CryptoBot API инициализирован")
+    except Exception as e:
+        print(f"❌ Ошибка инициализации CryptoBot: {e}")
+        crypto = None
 
 # --- БАЗА ДАННЫХ ---
 def init_db():
@@ -175,7 +187,9 @@ def get_config(category):
                     "blur": vals[11] if len(vals) > 11 else 0.25
                 })
         return config
-    except: return None
+    except Exception as e:
+        print(f"Ошибка загрузки конфига: {e}")
+        return None
 
 def get_font_path(category, font_type="1"):
     exts = ['.ttf', '.otf', '.TTF', '.OTF']
@@ -379,6 +393,19 @@ async def cmd_start(message: types.Message, state: FSMContext):
 async def buy_menu(call: types.CallbackQuery, state: FSMContext):
     user_id = call.from_user.id
     
+    # Проверяем доступность CryptoBot
+    if not crypto:
+        await call.message.edit_text(
+            "<b>❌ Платежная система временно недоступна</b>\n\n"
+            "Пожалуйста, обратитесь к администратору для покупки токенов.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_categories")
+            ]]),
+            parse_mode="HTML"
+        )
+        await call.answer()
+        return
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1 токен (2 USDT)", callback_data="buy_1")],
         [InlineKeyboardButton(text="5 токенов (10 USDT)", callback_data="buy_5")],
@@ -403,25 +430,45 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
     amount = int(call.data.split("_")[1])
     user_id = call.from_user.id
     
+    if not crypto:
+        await call.message.edit_text(
+            "❌ Платежная система недоступна. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")
+            ]])
+        )
+        await call.answer()
+        return
+    
     # Генерируем уникальный ID платежа
     payment_id = str(uuid.uuid4())
     
     try:
         # Создаем инвойс в CryptoBot
         amount_usdt = amount * TOKEN_PRICE_USDT
+        
+        # Для cryptopay библиотеки синтаксис может отличаться
+        # Проверьте документацию вашей версии библиотеки
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=amount_usdt,
             description=f"Покупка {amount} токенов для бота",
-            payload=payment_id  # Важно: этот payload вернется в вебхуке
+            payload=payment_id
         )
         
+        # Получаем ID инвойса (может быть invoice.invoice_id или invoice.id)
+        invoice_id = getattr(invoice, 'invoice_id', getattr(invoice, 'id', None))
+        pay_url = getattr(invoice, 'pay_url', getattr(invoice, 'url', None))
+        
+        if not invoice_id or not pay_url:
+            raise Exception("Не удалось получить данные инвойса")
+        
         # Сохраняем запись о платеже
-        create_payment_record(user_id, amount, payment_id, invoice.invoice_id)
+        create_payment_record(user_id, amount, payment_id, invoice_id)
         
         # Создаем клавиатуру с кнопкой для оплаты
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=invoice.pay_url)],
+            [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{payment_id}")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")]
         ])
@@ -456,6 +503,10 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
     payment_id = call.data.replace("check_payment_", "")
     user_id = call.from_user.id
     
+    if not crypto:
+        await call.answer("Платежная система недоступна", show_alert=True)
+        return
+    
     try:
         # Получаем информацию о платеже из БД
         conn = sqlite3.connect(DB_PATH)
@@ -479,9 +530,17 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             return
         
         # Проверяем статус инвойса в CryptoBot
-        invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
+        # Синтаксис может отличаться в зависимости от версии библиотеки
+        try:
+            invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
+            invoice = invoices[0] if invoices else None
+            invoice_status = getattr(invoice, 'status', None)
+        except:
+            # Альтернативный метод
+            invoice = await crypto.get_invoice(invoice_id)
+            invoice_status = getattr(invoice, 'status', None)
         
-        if invoices and invoices[0].status == 'paid':
+        if invoice_status == 'paid':
             # Платеж подтвержден
             update_payment_status(payment_id, "completed")
             add_tokens(user_id, amount_tokens)
@@ -505,13 +564,6 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
     except Exception as e:
         logging.error(f"Error checking payment: {e}")
         await call.answer("Ошибка при проверке платежа", show_alert=True)
-
-# Вебхук для CryptoBot (если используете вебхуки вместо polling)
-@dp.message(lambda message: message.successful_payment is not None)
-async def process_successful_payment(message: types.Message):
-    """Обработка успешного платежа (если используется Telegram Payments)"""
-    # Для CryptoBot этот метод может не использоваться
-    pass
 
 @dp.callback_query(F.data == "back_to_categories")
 async def back_to_categories(call: types.CallbackQuery, state: FSMContext):
@@ -634,7 +686,13 @@ async def process_data(message: types.Message, state: FSMContext):
     data = await state.get_data()
     category = data['category']
     config = get_config(category)
+    if not config:
+        return await message.answer("❌ Ошибка загрузки конфигурации шаблона")
+    
     f1, f2, f_num = get_font_path(category, "1"), get_font_path(category, "2"), get_font_path(category, "num")
+    
+    if not f1:
+        return await message.answer("❌ Не найден шрифт для категории")
     
     user_id = message.from_user.id
     if user_id not in ADMIN_IDS:
@@ -652,9 +710,10 @@ async def process_data(message: types.Message, state: FSMContext):
             return
 
     try:
-        with Image.open(os.path.join(TEMPLATES_DIR, category, data['chosen_tpl'])) as img:
+        template_path = os.path.join(TEMPLATES_DIR, category, data['chosen_tpl'])
+        with Image.open(template_path) as img:
             img = img.convert("RGBA")
-            for i in range(10):
+            for i in range(min(10, len(config))):
                 cfg = config[i]
                 text = lines[i]
                 if i == 9:
@@ -690,7 +749,8 @@ async def process_data(message: types.Message, state: FSMContext):
             )
             await state.clear()
     except Exception as e:
-        await message.answer(f"❌ Ошибка: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)}")
+        logging.error(f"Error processing image: {e}")
 
 @dp.message(Command("balance"))
 async def cmd_balance(message: types.Message):
@@ -772,9 +832,6 @@ async def cmd_stats(message: types.Message):
     await message.answer(stats_text, parse_mode="HTML")
 
 async def main(): 
-    # Для использования вебхуков (рекомендуется для продакшена):
-    # await bot.set_webhook(url="https://your-domain.com/webhook")
-    
     # Для использования polling (для разработки):
     await dp.start_polling(bot)
 
