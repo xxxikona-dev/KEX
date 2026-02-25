@@ -4,6 +4,7 @@ import logging
 import sys
 import textwrap
 import re
+import random
 from io import BytesIO
 
 from aiogram import Bot, Dispatcher, F, types
@@ -12,11 +13,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, FSInputFile, BufferedInputFile
 from aiogram.client.session.aiohttp import AiohttpSession
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from dotenv import load_dotenv
-
-# --- НАСТРОЙКИ ЛОГИРОВАНИЯ ---
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 load_dotenv()
@@ -25,10 +23,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 
-# Создаем папки, если их нет
-os.makedirs(TEMPLATES_DIR, exist_ok=True)
-os.makedirs(FONTS_DIR, exist_ok=True)
-
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 bot = Bot(token=TOKEN, session=AiohttpSession())
 dp = Dispatcher()
 
@@ -37,7 +32,7 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+# --- ФУНКЦИИ ЗАГРУЗКИ ---
 
 def get_categories():
     if not os.path.exists(TEMPLATES_DIR): return []
@@ -62,15 +57,12 @@ def get_config(category):
                     "width": int(vals[8]),
                     "spacing": vals[9],
                     "lines": int(vals[10]),
-                    "blur": vals[11] if len(vals) > 11 else 0.15
+                    "blur": vals[11] if len(vals) > 11 else 0.25
                 })
         return config
-    except Exception as e:
-        logging.error(f"Ошибка чтения coo.txt: {e}")
-        return None
+    except: return None
 
 def get_font_path(category, font_type="1"):
-    """Ищет шрифты 1.ttf, 2.ttf или num.otf в папке категории"""
     exts = ['.ttf', '.otf', '.TTF', '.OTF']
     folder = os.path.join(FONTS_DIR, category)
     if not os.path.exists(folder): return None
@@ -80,41 +72,59 @@ def get_font_path(category, font_type="1"):
     return None
 
 def format_passport_number(text):
-    """Превращает 0000000000 или 0000 000000 в 00  00  000000"""
     clean = text.replace(" ", "")
     if len(clean) == 10 and clean.isdigit():
-        return f"{clean[:2]}  {clean[2:4]}  {clean[4:]}"
+        return f"{clean[:2]} {clean[2:4]} {clean[4:]}"
     return text
+
+# --- ЭФФЕКТЫ РЕАЛИЗМА ---
+
+def add_noise_to_layer(layer, intensity=15):
+    """Добавляет микро-зернистость на слой текста для эффекта печати"""
+    width, height = layer.size
+    pixels = layer.load()
+    for y in range(height):
+        for x in range(width):
+            r, g, b, a = pixels[x, y]
+            if a > 0:
+                noise = random.randint(-intensity, intensity)
+                new_a = max(0, min(255, a + noise))
+                pixels[x, y] = (r, g, b, new_a)
+    return layer
 
 # --- ОТРИСОВКА ---
 
-def draw_text_on_layer(img, text, font, config):
+def draw_text_on_layer(img, text, font, config, is_fio=False):
     text = str(text).upper()
-    # Создаем временный слой для текста (с запасом под поворот)
+    
+    # Авто-трекинг (расстояние между буквами) для ФИО
+    if is_fio:
+        text = " ".join(list(text.replace(" ", "")))
+
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    txt_layer = Image.new("RGBA", (tw + 300, th + 300), (0, 0, 0, 0))
+    txt_layer = Image.new("RGBA", (tw + 400, th + 400), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    fill_color = config["color"] + (config.get("alpha", 230),) 
-    d.text(((tw + 300) // 2, (th + 300) // 2), text, font=font, fill=fill_color, anchor="mm")
+    fill_color = config["color"] + (config.get("alpha", 225),) 
+    d.text(((tw + 400) // 2, (th + 400) // 2), text, font=font, fill=fill_color, anchor="mm")
     
-    # Поворот
+    # Эффект зернистости чернил
+    txt_layer = add_noise_to_layer(txt_layer)
+    
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
     
-    # Размытие
     if config.get("blur", 0) > 0:
         txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
 
-    # Наложение
     lw, lh = txt_layer.size
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
     img.alpha_composite(txt_layer, (offset_x, offset_y))
 
-def process_field(img, text, font, config):
+def process_field(img, text, font, config, is_fio=False):
     if config.get("lines", 1) > 1:
         chars_limit = config.get("width", 30)
         max_lines = config.get("lines", 3)
@@ -128,9 +138,9 @@ def process_field(img, text, font, config):
         for i, line in enumerate(lines):
             line_cfg = config.copy()
             line_cfg["coord"] = (base_x, start_y + (i * line_step))
-            draw_text_on_layer(img, line, font, line_cfg)
+            draw_text_on_layer(img, line, font, line_cfg, is_fio=is_fio)
     else:
-        draw_text_on_layer(img, text, font, config)
+        draw_text_on_layer(img, text, font, config, is_fio=is_fio)
 
 # --- ХЕНДЛЕРЫ ---
 
@@ -138,9 +148,7 @@ def process_field(img, text, font, config):
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     categories = get_categories()
-    if not categories:
-        return await message.answer("❌ Папка 'templates' пуста!")
-    
+    if not categories: return await message.answer("Папка templates пуста!")
     kb = [[InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"cat_{cat}")] for cat in categories]
     await message.answer("<b>Выберите категорию:</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="HTML")
     await state.set_state(Form.choosing_category)
@@ -150,22 +158,16 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
     category = call.data.split("_")[1]
     cat_path = os.path.join(TEMPLATES_DIR, category)
     tpls = sorted([f for f in os.listdir(cat_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
-    
-    if not tpls:
-        return await call.answer("❌ В папке нет фото!", show_alert=True)
-    
+    if not tpls: return await call.answer("Нет фото!", show_alert=True)
     await state.update_data(category=category, tpls=tpls)
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="⬅️", callback_data="p_0"),
         InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
         InlineKeyboardButton(text="➡️", callback_data="n_0")
     ]])
-    
-    await call.message.answer_photo(
-        FSInputFile(os.path.join(cat_path, tpls[0])),
-        caption=f"Категория: <b>{category}</b>\nШаблон: <code>{tpls[0]}</code>",
-        reply_markup=kb, parse_mode="HTML"
-    )
+    await call.message.answer_photo(FSInputFile(os.path.join(cat_path, tpls[0])), 
+                                   caption=f"Категория: <b>{category}</b>\nШаблон: <code>{tpls[0]}</code>", 
+                                   reply_markup=kb, parse_mode="HTML")
     await state.set_state(Form.browsing_templates)
     await call.answer()
 
@@ -173,23 +175,14 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
 async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     category, tpls = data.get("category"), data.get("tpls")
-    
-    if not category or not tpls:
-        return await call.answer("Сессия истекла! Введите /start", show_alert=True)
-
+    if not category or not tpls: return await call.answer("Сессия истекла!", show_alert=True)
     act, idx = call.data.split("_")
     idx = int(idx)
-    
     if act == "s":
         await state.update_data(chosen_tpl=tpls[idx])
-        guide = (
-            "<b>Введите 10 строк данных:</b>\n\n"
-            "<blockquote>1. Фамилия\n2. Имя\n3. Отчество\n4. Дата рожд.\n5. Место рожд.\n"
-            "6. Пол\n7. Кем выдан\n8. Дата выд.\n9. Код подр.\n10. Серия и номер</blockquote>\n"
-            "<b>Пример заполнения:</b>\n"
-            "<blockquote>ИВАНОВ\nИВАН\nИВАНОВИЧ\n01.01.1990\nГОР. МОСКВА\nМУЖ.\n"
-            "ОТДЕЛОМ УФМС РОССИИ\n10.10.2015\n770-001\n4510 123456</blockquote>"
-        )
+        guide = ("<b>Введите 10 строк данных:</b>\n\n"
+                 "<blockquote>1. Фамилия\n2. Имя\n3. Отчество\n4. Дата рожд.\n5. Место рожд.\n"
+                 "6. Пол\n7. Кем выдан\n8. Дата выд.\n9. Код подр.\n10. Серия и номер</blockquote>")
         await call.message.answer(guide, parse_mode="HTML")
         await state.set_state(Form.inputting_data)
     else:
@@ -206,17 +199,12 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
 @dp.message(Form.inputting_data)
 async def process_data(message: types.Message, state: FSMContext):
     lines = [l.strip() for l in message.text.split('\n') if l.strip()]
-    if len(lines) < 10:
-        return await message.answer(f"⚠️ Нужно 10 строк, вы ввели {len(lines)}")
+    if len(lines) < 10: return await message.answer(f"⚠️ Нужно 10 строк!")
     
     data = await state.get_data()
     category = data['category']
     config = get_config(category)
-    if not config: return await message.answer("❌ Ошибка: coo.txt не найден!")
-
-    f1 = get_font_path(category, "1")
-    f2 = get_font_path(category, "2")
-    f_num = get_font_path(category, "num")
+    f1, f2, f_num = get_font_path(category, "1"), get_font_path(category, "2"), get_font_path(category, "num")
 
     try:
         with Image.open(os.path.join(TEMPLATES_DIR, category, data['chosen_tpl'])) as img:
@@ -224,22 +212,19 @@ async def process_data(message: types.Message, state: FSMContext):
             for i in range(10):
                 cfg = config[i]
                 text = lines[i]
+                is_fio = i in [0, 1, 2] # Применяем трекинг для Фамилии, Имени, Отчества
 
-                # Логика подбора шрифта
-                if i == 9: # Серия/Номер
+                if i == 9:
                     text = format_passport_number(text)
-                    curr_font_p = f_num if f_num else f1
-                elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): # Цифры/Даты
-                    curr_font_p = f2
-                else: # Буквы
-                    curr_font_p = f1
+                    curr_f = f_num if f_num else f1
+                elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): curr_f = f2
+                else: curr_f = f1
                 
-                font = ImageFont.truetype(curr_font_p, cfg["size"])
-                process_field(img, text, font, cfg)
-
-                # Дублирование номера (11-я строка конфига)
-                if i == 9 and len(config) > 10:
-                    process_field(img, text, font, config[10])
+                font = ImageFont.truetype(curr_f, cfg["size"])
+                process_field(img, text, font, cfg, is_fio=is_fio)
+                
+                if i == 9 and len(config) > 10: # Дубликат номера
+                    process_field(img, text, font, config[10], is_fio=False)
 
             res = img.convert("RGB")
             buf = BytesIO()
@@ -248,11 +233,7 @@ async def process_data(message: types.Message, state: FSMContext):
             await message.answer_photo(BufferedInputFile(buf.read(), filename="res.jpg"), caption="✅ Готово!")
             await state.clear()
     except Exception as e:
-        logging.exception("Ошибка генерации")
         await message.answer(f"❌ Ошибка: {e}")
 
-async def main():
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+async def main(): await dp.start_polling(bot)
+if __name__ == "__main__": asyncio.run(main())
