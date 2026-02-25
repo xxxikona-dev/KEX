@@ -6,9 +6,12 @@ import textwrap
 import re
 import random
 import sqlite3
+import hmac
+import hashlib
 from io import BytesIO
 from datetime import datetime, timedelta
 import uuid
+from typing import Optional
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
@@ -16,43 +19,39 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, FSInputFile, BufferedInputFile
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageOps
 from dotenv import load_dotenv
-
-# Импорт для CryptoBot API
-try:
-    from cryptopay import CryptoPay
-    from cryptopay.types import Invoice
-    CRYPTOPAY_AVAILABLE = True
-except ImportError:
-    print("⚠️ Библиотека cryptopay не установлена. Установите: pip install cryptopay")
-    CRYPTOPAY_AVAILABLE = False
+from aiocryptopay import AioCryptoPay, Networks
 
 # --- ИНИЦИАЛИЗАЦИЯ ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-CRYPTOBOT_TOKEN = os.getenv("538436:AAz9j6rKbh84ZUeahJnNfvG82bBjDF1JgOZ")  # Токен от @CryptoBot
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+CRYPTOBOT_WEBHOOK_SECRET = os.getenv("CRYPTOBOT_WEBHOOK_SECRET", "default_secret")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://your-domain.com/webhook/cryptobot")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 # ID администраторов (бесконечные токены)
-ADMIN_IDS = [5153650495, 987654321]  # ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID
+ADMIN_IDS = [5153650495]  # Добавьте свои ID
 
 # Настройки CryptoBot
-CRYPTOBOT_API_URL = "https://pay.crypt.bot/api/"  # Основной URL
 TOKEN_PRICE_USDT = 2  # Цена одного токена в USDT
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 bot = Bot(token=TOKEN, session=AiohttpSession())
 dp = Dispatcher()
 
-# Инициализация CryptoBot (если библиотека доступна)
+# Инициализация CryptoBot
 crypto = None
-if CRYPTOPAY_AVAILABLE and CRYPTOBOT_TOKEN:
+if CRYPTOBOT_TOKEN:
     try:
-        crypto = CryptoPay(token=CRYPTOBOT_TOKEN, api_url=CRYPTOBOT_API_URL)
+        # Используем основную сеть CryptoBot
+        crypto = AioCryptoPay(token=CRYPTOBOT_TOKEN, network=Networks.MAIN_NET)
         print("✅ CryptoBot API инициализирован")
     except Exception as e:
         print(f"❌ Ошибка инициализации CryptoBot: {e}")
@@ -71,7 +70,8 @@ def init_db():
     ''')
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
-            payment_id TEXT PRIMARY KEY,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            payment_id TEXT UNIQUE,
             user_id INTEGER,
             amount_tokens INTEGER,
             amount_usdt REAL,
@@ -79,6 +79,15 @@ def init_db():
             invoice_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             completed_at TIMESTAMP
+        )
+    ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS invoices (
+            invoice_id TEXT PRIMARY KEY,
+            payment_id TEXT,
+            user_id INTEGER,
+            status TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     conn.commit()
@@ -127,6 +136,7 @@ def create_payment_record(user_id, tokens_amount, payment_id, invoice_id):
     )
     conn.commit()
     conn.close()
+    return payment_id
 
 def update_payment_status(payment_id, status):
     conn = sqlite3.connect(DB_PATH)
@@ -138,18 +148,39 @@ def update_payment_status(payment_id, status):
     conn.commit()
     conn.close()
 
-def get_pending_payment(user_id):
+def save_invoice(invoice_id, payment_id, user_id, status):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT payment_id, amount_tokens, invoice_id FROM payments WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
-        (user_id,)
+        "INSERT OR REPLACE INTO invoices (invoice_id, payment_id, user_id, status) VALUES (?, ?, ?, ?)",
+        (invoice_id, payment_id, user_id, status)
+    )
+    conn.commit()
+    conn.close()
+
+def get_payment_by_invoice(invoice_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT payment_id, user_id, amount_tokens, status FROM payments WHERE invoice_id = ?",
+        (invoice_id,)
     )
     result = cursor.fetchone()
     conn.close()
     return result
 
-# Инициализация БД при запуске
+def get_user_by_payment(payment_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id, amount_tokens FROM payments WHERE payment_id = ?",
+        (payment_id,)
+    )
+    result = cursor.fetchone()
+    conn.close()
+    return result
+
+# Инициализация БД
 init_db()
 
 class Form(StatesGroup):
@@ -160,7 +191,6 @@ class Form(StatesGroup):
     choosing_tokens_amount = State()
 
 # --- ФУНКЦИИ ЗАГРУЗКИ ---
-
 def get_categories():
     if not os.path.exists(TEMPLATES_DIR): return []
     return [d for d in os.listdir(TEMPLATES_DIR) if os.path.isdir(os.path.join(TEMPLATES_DIR, d))]
@@ -241,9 +271,8 @@ def generate_random_data():
         f"{random.randint(1000, 9999)} {random.randint(100000, 999999)}"
     ]
 
-# --- ВОДЯНЫЕ ЗНАКИ (НЕМНОГО ЗАМЕТНЕЕ) ---
+# --- ВОДЯНЫЕ ЗНАКИ ---
 def add_watermarks(image):
-    """Добавляет слегка заметные водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
@@ -261,7 +290,7 @@ def add_watermarks(image):
             font_path = font_files[0] if font_files else None
         
         if font_path:
-            font_size = 40  # Оставляем тот же размер
+            font_size = 40
             font = ImageFont.truetype(font_path, font_size)
         else:
             font = ImageFont.load_default()
@@ -270,11 +299,8 @@ def add_watermarks(image):
     
     width, height = watermarked.size
     
-    # Уменьшаем расстояние между водяными знаками (чаще)
-    spacing = 100  # Было 150
-    
-    # Немного увеличиваем непрозрачность
-    opacity_range = (40, 70)  # Было (20, 40)
+    spacing = 100
+    opacity_range = (40, 70)
     
     for y in range(-height, height * 2, spacing):
         for x in range(-width, width * 2, spacing * 2):
@@ -289,7 +315,6 @@ def add_watermarks(image):
             txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
             
-            # Немного увеличиваем прозрачность
             txt_draw.text((50, 50), text, font=font, 
                          fill=(255, 255, 255, random.randint(opacity_range[0], opacity_range[1])), 
                          anchor="mm")
@@ -298,28 +323,25 @@ def add_watermarks(image):
             
             watermark_layer.alpha_composite(txt_img, (x + random.randint(-50, 50), y + random.randint(-50, 50)))
     
-    # Оставляем точки, но делаем их немного заметнее
     for _ in range(500):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        draw.point((x, y), fill=(255, 255, 255, random.randint(50, 90)))  # Было (30, 70)
+        draw.point((x, y), fill=(255, 255, 255, random.randint(50, 90)))
     
-    # Оставляем линии, но делаем их немного заметнее
     for _ in range(50):
         x1 = random.randint(0, width)
         y1 = random.randint(0, height)
         x2 = random.randint(0, width)
         y2 = random.randint(0, height)
         draw.line([(x1, y1), (x2, y2)], 
-                 fill=(255, 255, 255, random.randint(25, 45)),  # Было (15, 30)
+                 fill=(255, 255, 255, random.randint(25, 45)),
                  width=random.randint(1, 3))
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
 
-# --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА С ВОДЯНЫМИ ЗНАКАМИ ---
+# --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
 async def create_preview_with_watermark(category, template_name, random_data):
-    """Создает предпросмотр шаблона с рандомными данными и водяными знаками"""
     try:
         config = get_config(category)
         if not config:
@@ -333,7 +355,6 @@ async def create_preview_with_watermark(category, template_name, random_data):
         with Image.open(template_path) as img:
             img = img.convert("RGBA")
             
-            # Заполняем рандомными данными
             for i in range(min(10, len(config))):
                 cfg = config[i]
                 text = random_data[i]
@@ -350,12 +371,11 @@ async def create_preview_with_watermark(category, template_name, random_data):
                 if i == 9 and len(config) > 10:
                     process_field(img, text, font, config[10])
             
-            # Добавляем водяные знаки ТОЛЬКО для предпросмотра
             img_with_watermarks = add_watermarks(img)
             
             res = img_with_watermarks.convert("RGB")
             buf = BytesIO()
-            res.save(buf, format="JPEG", quality=85)  # Чуть ниже качество для предпросмотра
+            res.save(buf, format="JPEG", quality=85)
             buf.seek(0)
             return buf
     except Exception as e:
@@ -417,7 +437,6 @@ def process_field(img, text, font, config):
         draw_text_on_layer(img, text, font, config)
 
 # --- ХЕНДЛЕРЫ ---
-
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
@@ -449,9 +468,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data == "buy_menu")
 async def buy_menu(call: types.CallbackQuery, state: FSMContext):
-    user_id = call.from_user.id
-    
-    # Проверяем доступность CryptoBot
     if not crypto:
         await call.message.edit_text(
             "<b>❌ Платежная система временно недоступна</b>\n\n"
@@ -505,27 +521,23 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
         # Создаем инвойс в CryptoBot
         amount_usdt = amount * TOKEN_PRICE_USDT
         
+        # Создаем счет с помощью aiocryptopay
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=amount_usdt,
-            description=f"Покупка {amount} токенов для бота",
-            payload=payment_id
+            description=f"Покупка {amount} токенов",
+            payload=payment_id,  # Важно: этот payload вернется в webhook
+            expired_in=3600  # Счет действителен 1 час
         )
         
-        # Получаем ID инвойса и URL для оплаты
-        invoice_id = getattr(invoice, 'invoice_id', getattr(invoice, 'id', None))
-        pay_url = getattr(invoice, 'pay_url', getattr(invoice, 'url', None))
-        
-        if not invoice_id or not pay_url:
-            raise Exception("Не удалось получить данные инвойса")
-        
-        # Сохраняем запись о платеже
-        create_payment_record(user_id, amount, payment_id, invoice_id)
+        # Сохраняем информацию о счете
+        save_invoice(invoice.invoice_id, payment_id, user_id, 'active')
+        create_payment_record(user_id, amount, payment_id, invoice.invoice_id)
         
         # Создаем клавиатуру с кнопкой для оплаты
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{payment_id}")],
+            [InlineKeyboardButton(text="💳 Оплатить", url=invoice.pay_url)],
+            [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_payment_{payment_id}")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")]
         ])
         
@@ -534,9 +546,10 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
             f"Токенов: <b>{amount}</b>\n"
             f"Сумма: <b>{amount_usdt} USDT</b>\n\n"
             f"ID платежа: <code>{payment_id}</code>\n\n"
+            f"⏰ Счет действителен 1 час\n\n"
             "1. Нажмите кнопку \"Оплатить\"\n"
             "2. Оплатите счет в @CryptoBot\n"
-            "3. Нажмите \"Я оплатил\" для проверки",
+            "3. Нажмите \"Проверить оплату\" или дождитесь автоматического зачисления",
             reply_markup=kb,
             parse_mode="HTML"
         )
@@ -586,15 +599,9 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             return
         
         # Проверяем статус инвойса в CryptoBot
-        try:
-            invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
-            invoice = invoices[0] if invoices else None
-            invoice_status = getattr(invoice, 'status', None)
-        except:
-            invoice = await crypto.get_invoice(invoice_id)
-            invoice_status = getattr(invoice, 'status', None)
+        invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
         
-        if invoice_status == 'paid':
+        if invoices and invoices[0].status == 'paid':
             # Платеж подтвержден
             update_payment_status(payment_id, "completed")
             add_tokens(user_id, amount_tokens)
@@ -609,11 +616,10 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 parse_mode="HTML"
             )
             
-            # Возвращаемся в главное меню через 3 секунды
             await asyncio.sleep(3)
             await cmd_start(call.message, state)
         else:
-            await call.answer("Платеж еще не обнаружен. Оплатите счет и нажмите снова.", show_alert=True)
+            await call.answer("❌ Платеж еще не обнаружен. Оплатите счет и нажмите снова.", show_alert=True)
             
     except Exception as e:
         logging.error(f"Error checking payment: {e}")
@@ -634,11 +640,9 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
     
     await state.update_data(category=category, tpls=tpls, current_index=0)
     
-    # Генерируем рандомные данные для предпросмотра
     random_data = generate_random_data()
     await state.update_data(preview_data=random_data)
     
-    # Создаем предпросмотр с водяными знаками и рандомными данными
     preview_buf = await create_preview_with_watermark(category, tpls[0], random_data)
     
     if preview_buf:
@@ -658,7 +662,6 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
             parse_mode="HTML"
         )
     else:
-        # Если не удалось создать предпросмотр, показываем обычное фото
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="⬅️", callback_data="p_0"),
             InlineKeyboardButton(text="✅ Выбрать", callback_data="s_0"),
@@ -742,17 +745,14 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     else:
         if act == "p":
             new_idx = (idx - 1) % len(tpls)
-        else:  # act == "n"
+        else:
             new_idx = (idx + 1) % len(tpls)
         
-        # Обновляем индекс
         await state.update_data(current_index=new_idx)
         
-        # Генерируем новые рандомные данные для следующего шаблона
         random_data = generate_random_data()
         await state.update_data(preview_data=random_data)
         
-        # Создаем предпросмотр с водяными знаками
         preview_buf = await create_preview_with_watermark(category, tpls[new_idx], random_data)
         
         if preview_buf:
@@ -841,7 +841,6 @@ async def process_data(message: types.Message, state: FSMContext):
                 if i == 9 and len(config) > 10:
                     process_field(img, text, font, config[10])
 
-            # НЕ добавляем водяные знаки на финальный результат!
             res = img.convert("RGB")
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=95)
@@ -922,7 +921,6 @@ async def cmd_stats(message: types.Message):
     cursor.execute("SELECT user_id, tokens FROM users ORDER BY tokens DESC LIMIT 10")
     top_users = cursor.fetchall()
     
-    # Статистика платежей
     cursor.execute("SELECT COUNT(*), SUM(amount_usdt) FROM payments WHERE status = 'completed'")
     payments_stats = cursor.fetchone()
     total_payments = payments_stats[0] or 0
@@ -942,8 +940,89 @@ async def cmd_stats(message: types.Message):
     
     await message.answer(stats_text, parse_mode="HTML")
 
-async def main(): 
-    await dp.start_polling(bot)
+# --- WEBHOOK ДЛЯ CRYPTOBOT ---
+async def cryptobot_webhook(request):
+    """Обработка webhook уведомлений от CryptoBot"""
+    try:
+        # Проверяем подпись запроса (если настроено)
+        signature = request.headers.get('crypto-pay-api-signature')
+        body = await request.text()
+        
+        # Здесь можно добавить проверку подписи с CRYPTOBOT_WEBHOOK_SECRET
+        
+        data = await request.json()
+        logging.info(f"Получен webhook от CryptoBot: {data}")
+        
+        # Проверяем тип уведомления
+        if data.get('event') == 'invoice_paid':
+            # Получаем данные инвойса
+            invoice = data.get('payload', {})
+            invoice_id = invoice.get('invoice_id')
+            payload = invoice.get('payload')  # это наш payment_id
+            status = invoice.get('status')
+            
+            if payload and status == 'paid':
+                # Обновляем статус платежа
+                update_payment_status(payload, 'completed')
+                
+                # Получаем информацию о платеже
+                payment_info = get_user_by_payment(payload)
+                if payment_info:
+                    user_id, amount_tokens = payment_info
+                    
+                    # Начисляем токены
+                    add_tokens(user_id, amount_tokens)
+                    
+                    # Пробуем уведомить пользователя
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"✅ <b>Оплата подтверждена!</b>\n\n"
+                            f"Зачислено: <b>{amount_tokens} токенов</b>\n"
+                            f"Новый баланс: <b>{get_user_tokens(user_id)} токенов</b>",
+                            parse_mode="HTML"
+                        )
+                    except Exception as e:
+                        logging.error(f"Не удалось уведомить пользователя {user_id}: {e}")
+        
+        return web.Response(text="OK")
+    except Exception as e:
+        logging.error(f"Ошибка в webhook: {e}")
+        return web.Response(status=500, text="Error")
 
-if __name__ == "__main__": 
-    asyncio.run(main())
+async def on_startup(app):
+    """Действия при запуске приложения"""
+    # Устанавливаем webhook для бота (если используете)
+    webhook_url = f"{WEBHOOK_URL}/bot"
+    await bot.set_webhook(webhook_url, drop_pending_updates=True)
+    logging.info(f"Webhook для бота установлен: {webhook_url}")
+
+async def on_shutdown(app):
+    """Действия при остановке приложения"""
+    await bot.delete_webhook()
+    await bot.session.close()
+
+def main():
+    """Запуск приложения с aiohttp"""
+    app = web.Application()
+    
+    # Настраиваем webhook для бота
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook/bot")
+    
+    # Добавляем эндпоинт для webhook от CryptoBot
+    app.router.add_post('/webhook/cryptobot', cryptobot_webhook)
+    
+    # Настраиваем startup и shutdown
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+    
+    # Запускаем сервер
+    web.run_app(app, host='0.0.0.0', port=8080)
+
+if __name__ == "__main__":
+    if WEBHOOK_URL and WEBHOOK_URL != "https://your-domain.com/webhook/cryptobot":
+        # Запуск с webhook
+        main()
+    else:
+        # Запуск с polling (для разработки)
+        asyncio.run(dp.start_polling(bot))
