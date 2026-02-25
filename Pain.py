@@ -335,7 +335,6 @@ async def create_preview_with_watermark(category, template_name, random_data):
                     curr_f = f1
                 
                 font = ImageFont.truetype(curr_f, cfg["size"])
-                from functions import process_field
                 process_field(img, text, font, cfg)
                 if i == 9 and len(config) > 10:
                     process_field(img, text, font, config[10])
@@ -498,12 +497,30 @@ async def process_buy(call: types.CallbackQuery, state: FSMContext):
             payload=payment_id
         )
         
+        # Получаем URL для оплаты (разные версии библиотеки)
+        if hasattr(invoice, 'pay_url'):
+            pay_url = invoice.pay_url
+        elif hasattr(invoice, 'url'):
+            pay_url = invoice.url
+        elif hasattr(invoice, 'bot_invoice_url'):
+            pay_url = invoice.bot_invoice_url
+        else:
+            raise Exception("Не удалось найти URL для оплаты")
+        
+        # Получаем ID инвойса
+        if hasattr(invoice, 'invoice_id'):
+            invoice_id = invoice.invoice_id
+        elif hasattr(invoice, 'id'):
+            invoice_id = invoice.id
+        else:
+            raise Exception("Не удалось найти ID инвойса")
+        
         # Сохраняем запись о платеже
-        create_payment_record(user_id, amount, payment_id, invoice.invoice_id)
+        create_payment_record(user_id, amount, payment_id, invoice_id)
         
         # Создаем клавиатуру с кнопкой для оплаты
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=invoice.pay_url)],
+            [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
             [InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_payment_{payment_id}")],
             [InlineKeyboardButton(text="◀️ Назад", callback_data="buy_menu")]
         ])
@@ -562,27 +579,39 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             return
         
         # Получаем инвойс по ID
-        invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
+        try:
+            invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
+            invoice = invoices[0] if invoices else None
+        except:
+            try:
+                invoice = await crypto.get_invoice(invoice_id=invoice_id)
+            except:
+                invoice = None
         
-        if invoices and invoices[0].status == 'paid':
-            # Платеж подтвержден
-            update_payment_status(payment_id, "completed")
-            add_tokens(user_id, amount_tokens)
+        if invoice:
+            # Получаем статус
+            invoice_status = getattr(invoice, 'status', None)
             
-            new_balance = get_user_tokens(user_id)
-            
-            await call.message.edit_text(
-                f"✅ <b>Оплата подтверждена!</b>\n\n"
-                f"Зачислено: <b>{amount_tokens} токенов</b>\n"
-                f"Новый баланс: <b>{new_balance} токенов</b>\n\n"
-                f"Спасибо за покупку!",
-                parse_mode="HTML"
-            )
-            
-            await asyncio.sleep(3)
-            await cmd_start(call.message, state)
-        else:
-            await call.answer("❌ Платеж еще не обнаружен. Оплатите счет и нажмите снова.", show_alert=True)
+            if invoice_status == 'paid':
+                # Платеж подтвержден
+                update_payment_status(payment_id, "completed")
+                add_tokens(user_id, amount_tokens)
+                
+                new_balance = get_user_tokens(user_id)
+                
+                await call.message.edit_text(
+                    f"✅ <b>Оплата подтверждена!</b>\n\n"
+                    f"Зачислено: <b>{amount_tokens} токенов</b>\n"
+                    f"Новый баланс: <b>{new_balance} токенов</b>\n\n"
+                    f"Спасибо за покупку!",
+                    parse_mode="HTML"
+                )
+                
+                await asyncio.sleep(3)
+                await cmd_start(call.message, state)
+                return
+        
+        await call.answer("❌ Платеж еще не обнаружен. Оплатите счет и нажмите снова.", show_alert=True)
             
     except Exception as e:
         logging.error(f"Error checking payment: {e}")
@@ -645,7 +674,6 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
 async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     category, tpls = data.get("category"), data.get("tpls")
-    current_index = data.get("current_index", 0)
     
     if not category or not tpls: 
         return await call.answer("Сессия истекла! Введите /start", show_alert=True)
@@ -770,6 +798,8 @@ async def process_data(message: types.Message, state: FSMContext):
         return await message.answer("❌ Не найден шрифт для категории")
     
     user_id = message.from_user.id
+    
+    # Проверяем наличие токенов (админы пропускаются)
     if user_id not in ADMIN_IDS:
         tokens = get_user_tokens(user_id)
         if tokens < 1:
@@ -810,12 +840,16 @@ async def process_data(message: types.Message, state: FSMContext):
             res.save(buf, format="JPEG", quality=95)
             buf.seek(0)
             
-            if user_id not in ADMIN_IDS:
-                deduct_token(user_id)
-                new_balance = get_user_tokens(user_id)
-                balance_msg = f"✅ Токен списан. Остаток: {new_balance}"
-            else:
+            # Списываем токен (админы пропускаются в функции deduct_token)
+            deduct_token(user_id)
+            
+            # Получаем актуальный баланс
+            new_balance = get_user_tokens(user_id)
+            
+            if user_id in ADMIN_IDS:
                 balance_msg = "✨ (админский режим)"
+            else:
+                balance_msg = f"✅ Токен списан. Остаток: {new_balance}"
             
             await message.answer_photo(
                 BufferedInputFile(buf.read(), filename="result.jpg"),
