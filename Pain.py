@@ -31,14 +31,14 @@ except ImportError:
 # --- ИНИЦИАЛИЗАЦИЯ ---
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
-CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")  # Токен от @CryptoBot
+CRYPTOBOT_TOKEN = os.getenv("538436:AAz9j6rKbh84ZUeahJnNfvG82bBjDF1JgOZ")  # Токен от @CryptoBot
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 # ID администраторов (бесконечные токены)
-ADMIN_IDS = [123456789, 987654321]  # ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID
+ADMIN_IDS = [5153650495, 987654321]  # ЗАМЕНИТЕ НА РЕАЛЬНЫЕ ID
 
 # Настройки CryptoBot
 CRYPTOBOT_API_URL = "https://pay.crypt.bot/api/"  # Основной URL
