@@ -182,69 +182,136 @@ def get_config(category):
         print(f"Ошибка загрузки конфига: {e}")
         return None, None, False
 
+# --- ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ВСЕХ ШРИФТОВ ---
+def debug_all_fonts():
+    """Проверяет все доступные шрифты"""
+    print("\n=== ПРОВЕРКА ВСЕХ ШРИФТОВ ===")
+    print(f"📁 Базовая папка fonts: {FONTS_DIR}")
+    
+    # Проверяем корневую папку fonts
+    if os.path.exists(FONTS_DIR):
+        fonts = [f for f in os.listdir(FONTS_DIR) if f.lower().endswith(('.ttf', '.otf'))]
+        if fonts:
+            print(f"✅ В корневой папке найдены шрифты: {fonts}")
+        else:
+            print(f"❌ В корневой папке нет шрифтов")
+    else:
+        print(f"❌ Корневая папка fonts не существует: {FONTS_DIR}")
+        try:
+            os.makedirs(FONTS_DIR)
+            print(f"✅ Создана папка fonts: {FONTS_DIR}")
+        except:
+            print(f"❌ Не удалось создать папку fonts")
+    
+    # Проверяем все категории
+    categories = get_categories()
+    for category in categories:
+        category_font_dir = os.path.join(FONTS_DIR, category)
+        if os.path.exists(category_font_dir):
+            print(f"\n📁 Категория: {category}")
+            print(f"   Папка шрифтов: {category_font_dir}")
+            
+            fonts = [f for f in os.listdir(category_font_dir) if f.lower().endswith(('.ttf', '.otf'))]
+            if fonts:
+                print(f"   ✅ Найдены шрифты: {fonts}")
+                
+                # Проверяем конкретно шрифт 3
+                font_3_exists = any(f.startswith('3') and f.lower().endswith(('.ttf', '.otf')) for f in fonts)
+                if font_3_exists:
+                    font_3_path = next(os.path.join(category_font_dir, f) for f in fonts if f.startswith('3') and f.lower().endswith(('.ttf', '.otf')))
+                    print(f"   ✅ Шрифт 3 найден: {font_3_path}")
+                    
+                    # Пробуем загрузить шрифт
+                    try:
+                        test_font = ImageFont.truetype(font_3_path, 12)
+                        print(f"   ✅ Шрифт 3 успешно загружается в PIL")
+                    except Exception as e:
+                        print(f"   ❌ Ошибка загрузки шрифта 3: {e}")
+                else:
+                    print(f"   ❌ Шрифт 3 НЕ найден в папке {category}")
+                    
+                # Проверяем другие шрифты
+                for font_file in fonts:
+                    font_path = os.path.join(category_font_dir, font_file)
+                    try:
+                        test_font = ImageFont.truetype(font_path, 12)
+                        print(f"   ✅ Шрифт {font_file} загружается")
+                    except Exception as e:
+                        print(f"   ❌ Шрифт {font_file} не загружается: {e}")
+            else:
+                print(f"   ❌ В папке {category} нет шрифтов")
+        else:
+            print(f"\n📁 Категория: {category}")
+            print(f"   ❌ Папка шрифтов не существует: {category_font_dir}")
+            try:
+                os.makedirs(category_font_dir)
+                print(f"   ✅ Создана папка шрифтов для {category}")
+            except:
+                print(f"   ❌ Не удалось создать папку шрифтов")
+    
+    print("\n" + "=" * 50)
+
 # --- УЛУЧШЕННАЯ ФУНКЦИЯ ЗАГРУЗКИ ШРИФТОВ ---
 def get_font_path(category, font_type="1"):
     """
-    Улучшенная функция загрузки шрифтов с поддержкой запасных вариантов
+    Улучшенная функция загрузки шрифтов с подробной отладкой
     """
+    print(f"\n🔍 Поиск шрифта {font_type} для категории {category}")
+    
     # Список возможных расширений
     exts = ['.ttf', '.otf', '.TTF', '.OTF']
     
     # 1. Сначала ищем в папке категории
     category_font_dir = os.path.join(FONTS_DIR, category)
     if os.path.exists(category_font_dir):
+        print(f"  📁 Проверяем папку: {category_font_dir}")
+        
         # Пробуем точное совпадение
         for ext in exts:
             exact_path = os.path.join(category_font_dir, font_type + ext)
             if os.path.exists(exact_path):
-                print(f"✅ Найден шрифт {font_type} в папке категории: {exact_path}")
+                print(f"  ✅ Найден точный файл: {exact_path}")
                 return exact_path
         
         # Ищем любой файл, начинающийся с font_type
         for file in os.listdir(category_font_dir):
             if file.startswith(font_type) and any(file.lower().endswith(ext.lower()) for ext in exts):
                 full_path = os.path.join(category_font_dir, file)
-                print(f"✅ Найден шрифт {font_type} (похожий): {full_path}")
+                print(f"  ✅ Найден похожий файл: {full_path}")
                 return full_path
+        
+        print(f"  ❌ В папке категории нет шрифта {font_type}")
+    else:
+        print(f"  ❌ Папка категории не существует: {category_font_dir}")
     
     # 2. Если не нашли в папке категории, ищем в общей папке fonts
     if os.path.exists(FONTS_DIR):
+        print(f"  📁 Проверяем общую папку: {FONTS_DIR}")
+        
         # Ищем файл с таким же именем
         for ext in exts:
             common_path = os.path.join(FONTS_DIR, font_type + ext)
             if os.path.exists(common_path):
-                print(f"✅ Найден шрифт {font_type} в общей папке: {common_path}")
+                print(f"  ✅ Найден в общей папке: {common_path}")
                 return common_path
         
         # Ищем любой похожий файл
         for file in os.listdir(FONTS_DIR):
             if file.startswith(font_type) and any(file.lower().endswith(ext.lower()) for ext in exts):
                 full_path = os.path.join(FONTS_DIR, file)
-                print(f"✅ Найден шрифт {font_type} в общей папке (похожий): {full_path}")
+                print(f"  ✅ Найден похожий в общей папке: {full_path}")
                 return full_path
+        
+        print(f"  ❌ В общей папке нет шрифта {font_type}")
+    else:
+        print(f"  ❌ Общая папка fonts не существует: {FONTS_DIR}")
     
     # 3. Для шрифта 3 (scode) пробуем использовать шрифт 1 как запасной
     if font_type == "3":
-        print(f"⚠️ Шрифт 3 не найден, пробуем использовать шрифт 1 как запасной")
+        print(f"  ⚠️ Шрифт 3 не найден, пробуем использовать шрифт 1")
         return get_font_path(category, "1")
     
-    # 4. Пробуем найти любой TTF шрифт в папке категории
-    if os.path.exists(category_font_dir):
-        for file in os.listdir(category_font_dir):
-            if file.lower().endswith(('.ttf', '.otf')):
-                full_path = os.path.join(category_font_dir, file)
-                print(f"⚠️ Используем первый попавшийся шрифт: {full_path}")
-                return full_path
-    
-    # 5. Пробуем найти любой TTF шрифт в общей папке
-    if os.path.exists(FONTS_DIR):
-        for file in os.listdir(FONTS_DIR):
-            if file.lower().endswith(('.ttf', '.otf')):
-                full_path = os.path.join(FONTS_DIR, file)
-                print(f"⚠️ Используем первый попавшийся шрифт из общей папки: {full_path}")
-                return full_path
-    
-    print(f"❌ НЕ НАЙДЕНО НИКАКИХ ШРИФТОВ для {font_type}")
+    print(f"  ❌ НЕ НАЙДЕНО НИКАКИХ ШРИФТОВ для {font_type}")
     return None
 
 def format_passport_number(text):
@@ -430,7 +497,7 @@ def add_watermarks(image):
             txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
             
-            # Увеличиваем непрозрачность до 60-100 (было 20-40)
+            # Увеличиваем непрозрачность до 60-100
             txt_draw.text((50, 50), text, font=font, 
                          fill=(255, 255, 255, random.randint(60, 100)), 
                          anchor="mm")
@@ -490,28 +557,44 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
             
             # Если есть scode, генерируем и добавляем две строки
             if has_scode and scode_config:
-                # Определяем шрифт для scode (используем f3 или запасной f1)
-                scode_font_path = f3 if f3 else f1
+                print(f"\n=== ОТЛАДКА SCODE ДЛЯ ПРЕДПРОСМОТРА ===")
+                print(f"Категория: {category}")
+                print(f"scode_config: {scode_config}")
                 
-                if scode_font_path:
-                    scode_lines = generate_scode_lines(random_data)
+                scode_font_path = f3 if f3 else f1
+                print(f"Путь к шрифту для scode: {scode_font_path}")
+                
+                if scode_font_path and os.path.exists(scode_font_path):
+                    print(f"✅ Файл шрифта существует")
                     
-                    line_height = scode_config["size"] + scode_config.get("spacing", 10)
-                    
-                    for j, line in enumerate(scode_lines):
-                        # Для второй строки смещаем по Y
-                        if j == 1:
-                            line_cfg = scode_config.copy()
-                            line_cfg["coord"] = (scode_config["coord"][0], 
-                                                scode_config["coord"][1] + line_height)
-                        else:
-                            line_cfg = scode_config
+                    try:
+                        # Проверяем, что шрифт можно загрузить
+                        test_font = ImageFont.truetype(scode_font_path, 12)
+                        print(f"✅ Шрифт успешно загружается")
                         
-                        try:
-                            font = ImageFont.truetype(scode_font_path, line_cfg["size"])
-                            process_field(img, line, font, line_cfg)
-                        except Exception as e:
-                            print(f"Ошибка загрузки шрифта для scode: {e}")
+                        scode_lines = generate_scode_lines(random_data)
+                        print(f"Сгенерированы scode строки: {scode_lines}")
+                        
+                        line_height = scode_config["size"] + scode_config.get("spacing", 10)
+                        
+                        for j, line in enumerate(scode_lines):
+                            if j == 1:
+                                line_cfg = scode_config.copy()
+                                line_cfg["coord"] = (scode_config["coord"][0], 
+                                                    scode_config["coord"][1] + line_height)
+                            else:
+                                line_cfg = scode_config
+                            
+                            try:
+                                font = ImageFont.truetype(scode_font_path, line_cfg["size"])
+                                process_field(img, line, font, line_cfg)
+                                print(f"✅ scode строка {j+1} нарисована")
+                            except Exception as e:
+                                print(f"❌ Ошибка при рисовании scode строки {j+1}: {e}")
+                    except Exception as e:
+                        print(f"❌ Ошибка при загрузке шрифта: {e}")
+                else:
+                    print(f"❌ Шрифт не найден или не существует")
             
             img_with_watermarks = add_watermarks(img)
             
@@ -777,27 +860,44 @@ async def process_data(message: types.Message, state: FSMContext):
                 
                 # Если есть scode, генерируем и добавляем строки
                 if has_scode and scode_config:
-                    # Определяем шрифт для scode (используем f3 или запасной f1)
-                    scode_font_path = f3 if f3 else f1
+                    print(f"\n=== ОТЛАДКА SCODE ===")
+                    print(f"Категория: {category}")
+                    print(f"scode_config: {scode_config}")
                     
-                    if scode_font_path:
-                        scode_lines = generate_scode_lines(lines)
+                    scode_font_path = f3 if f3 else f1
+                    print(f"Путь к шрифту для scode: {scode_font_path}")
+                    
+                    if scode_font_path and os.path.exists(scode_font_path):
+                        print(f"✅ Файл шрифта существует")
                         
-                        line_height = scode_config["size"] + scode_config.get("spacing", 10)
-                        
-                        for j, line in enumerate(scode_lines):
-                            if j == 1:
-                                line_cfg = scode_config.copy()
-                                line_cfg["coord"] = (scode_config["coord"][0], 
-                                                    scode_config["coord"][1] + line_height)
-                            else:
-                                line_cfg = scode_config
+                        try:
+                            # Проверяем, что шрифт можно загрузить
+                            test_font = ImageFont.truetype(scode_font_path, 12)
+                            print(f"✅ Шрифт успешно загружается")
                             
-                            try:
-                                font = ImageFont.truetype(scode_font_path, line_cfg["size"])
-                                process_field(img, line, font, line_cfg)
-                            except Exception as e:
-                                print(f"Ошибка загрузки шрифта для scode: {e}")
+                            scode_lines = generate_scode_lines(lines)
+                            print(f"Сгенерированы scode строки: {scode_lines}")
+                            
+                            line_height = scode_config["size"] + scode_config.get("spacing", 10)
+                            
+                            for j, line in enumerate(scode_lines):
+                                if j == 1:
+                                    line_cfg = scode_config.copy()
+                                    line_cfg["coord"] = (scode_config["coord"][0], 
+                                                        scode_config["coord"][1] + line_height)
+                                else:
+                                    line_cfg = scode_config
+                                
+                                try:
+                                    font = ImageFont.truetype(scode_font_path, line_cfg["size"])
+                                    process_field(img, line, font, line_cfg)
+                                    print(f"✅ scode строка {j+1} нарисована")
+                                except Exception as e:
+                                    print(f"❌ Ошибка при рисовании scode строки {j+1}: {e}")
+                        except Exception as e:
+                            print(f"❌ Ошибка при загрузке шрифта: {e}")
+                    else:
+                        print(f"❌ Шрифт не найден или не существует")
                 
                 # Сохраняем результат
                 res = img.convert("RGB")
@@ -972,27 +1072,36 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                     
                     # Если есть scode, генерируем и добавляем строки
                     if has_scode and scode_config:
-                        # Определяем шрифт для scode (используем f3 или запасной f1)
-                        scode_font_path = f3 if f3 else f1
+                        print(f"\n=== ОТЛАДКА SCODE (ПЛАТЕЖ) ===")
                         
-                        if scode_font_path:
-                            scode_lines = generate_scode_lines(data_lines)
-                            
-                            line_height = scode_config["size"] + scode_config.get("spacing", 10)
-                            
-                            for j, line in enumerate(scode_lines):
-                                if j == 1:
-                                    line_cfg = scode_config.copy()
-                                    line_cfg["coord"] = (scode_config["coord"][0], 
-                                                        scode_config["coord"][1] + line_height)
-                                else:
-                                    line_cfg = scode_config
+                        scode_font_path = f3 if f3 else f1
+                        print(f"Путь к шрифту для scode: {scode_font_path}")
+                        
+                        if scode_font_path and os.path.exists(scode_font_path):
+                            try:
+                                test_font = ImageFont.truetype(scode_font_path, 12)
+                                print(f"✅ Шрифт успешно загружается")
                                 
-                                try:
-                                    font = ImageFont.truetype(scode_font_path, line_cfg["size"])
-                                    process_field(img, line, font, line_cfg)
-                                except Exception as e:
-                                    print(f"Ошибка загрузки шрифта для scode: {e}")
+                                scode_lines = generate_scode_lines(data_lines)
+                                
+                                line_height = scode_config["size"] + scode_config.get("spacing", 10)
+                                
+                                for j, line in enumerate(scode_lines):
+                                    if j == 1:
+                                        line_cfg = scode_config.copy()
+                                        line_cfg["coord"] = (scode_config["coord"][0], 
+                                                            scode_config["coord"][1] + line_height)
+                                    else:
+                                        line_cfg = scode_config
+                                    
+                                    try:
+                                        font = ImageFont.truetype(scode_font_path, line_cfg["size"])
+                                        process_field(img, line, font, line_cfg)
+                                        print(f"✅ scode строка {j+1} нарисована")
+                                    except Exception as e:
+                                        print(f"❌ Ошибка при рисовании scode строки: {e}")
+                            except Exception as e:
+                                print(f"❌ Ошибка при загрузке шрифта: {e}")
                     
                     # Сохраняем результат
                     res = img.convert("RGB")
@@ -1041,6 +1150,10 @@ async def cmd_stats(message: types.Message):
     await message.answer(stats_text, parse_mode="HTML")
 
 async def main():
+    # Запускаем проверку шрифтов
+    debug_all_fonts()
+    
+    # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
