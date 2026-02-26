@@ -246,42 +246,45 @@ def generate_scode_lines(data):
     firstname = transliterate_to_english(data[1])
     patronymic = transliterate_to_english(data[2])
     birth_date = data[3].strip()
-    gender = data[5].strip().upper()
+    
+    # Исправленная логика определения пола для SCODE
+    raw_gender = data[5].strip().upper()
+    if raw_gender == 'М' or raw_gender == 'M':
+        gender_code = 'M'
+    elif raw_gender == 'Ж' or raw_gender == 'F':
+        gender_code = 'F'
+    else:
+        gender_code = '<' # Если пол не указан корректно
+        
     issue_date = data[7].strip()
     department_code = re.sub(r'[^0-9]', '', data[8])
     passport_number = re.sub(r'[^0-9]', '', data[9])
     
-    birth_day, birth_month, birth_year = birth_date.split('.')
-    issue_day, issue_month, issue_year = issue_date.split('.')
+    # Парсинг дат
+    try:
+        birth_day, birth_month, birth_year = birth_date.split('.')
+        issue_day, issue_month, issue_year = issue_date.split('.')
+        birth_short = f"{birth_year[-2:]}{birth_month}{birth_day}"
+        issue_short = f"{issue_year[-2:]}{issue_month}{issue_day}"
+    except:
+        birth_short = "000000"
+        issue_short = "000000"
     
-    # Первая строка
-    if len(lastname) > 9:
-        lastname = lastname[:9]
-    if len(firstname) > 7:
-        firstname = firstname[:7]
-    if len(patronymic) > 8:
-        patronymic = patronymic[:8]
-    
-    line1 = f"PNRUS{lastname}<<{firstname}<{patronymic}3"
+    # Первая строка (остается без изменений)
+    line1 = f"PNRUS{lastname[:9]}<<{firstname[:7]}<{patronymic[:8]}3"
     line1 = line1.ljust(44, '<')
     
     # Вторая строка
-    if len(passport_number) > 10:
-        passport_number = passport_number[:10]
-    elif len(passport_number) < 10:
-        passport_number = passport_number.ljust(10, '0')
+    # Форматируем номер паспорта (должно быть 9 цифр + 1 контрольная, здесь упрощено до 10)
+    pass_num = passport_number[:10].ljust(10, '0')
     
-    birth_short = f"{birth_year[-2:]}{birth_month}{birth_day}"
-    issue_short = f"{issue_year[-2:]}{issue_month}{issue_day}"
-    
-    if len(department_code) > 6:
-        department_code = department_code[:6]
-    elif len(department_code) < 6:
-        department_code = department_code.ljust(6, '0')
+    # Форматируем код подразделения (6 цифр)
+    dept_code = department_code[:6].ljust(6, '0')
     
     random_digits = f"{random.randint(0, 99):02d}"
     
-    line2 = f"{passport_number}RUS{birth_short}{gender[0]}{'<' * 7}7{issue_short}{department_code}<{random_digits}"
+    # Сборка второй строки с исправленным gender_code
+    line2 = f"{pass_num}RUS{birth_short}{gender_code}{'<' * 7}7{issue_short}{dept_code}<{random_digits}"
     line2 = line2.ljust(44, '<')
     
     return [line1, line2]
