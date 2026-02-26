@@ -132,7 +132,7 @@ def parse_config_line(line):
         "rotate": vals[3],
         "color": (int(vals[4]), int(vals[5]), int(vals[6])),
         "alpha": int(vals[7]),
-        "width": int(vals[8]),
+        "width": int(vals[8]) if int(vals[8]) > 0 else 30,
         "spacing": vals[9],
         "lines": int(vals[10]),
         "blur": vals[11] if len(vals) > 11 else 0.25
@@ -430,6 +430,9 @@ def process_field(img, text, font, config):
     
     if config.get("lines", 1) > 1:
         chars_limit = int(config.get("width", 30))
+        if chars_limit <= 0:
+            chars_limit = 30
+            
         max_lines = int(config.get("lines", 3))
         line_spacing = float(config.get("spacing", 10))
         
@@ -439,9 +442,9 @@ def process_field(img, text, font, config):
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # ПРАВИЛЬНОЕ ПОЗИЦИОНИРОВАНИЕ:
-        # base_y - это центр блока текста
-        # Вычисляем позицию первой строки
+        # ИСПРАВЛЕНО: Текст всегда начинается с первой строки
+        # base_y в конфиге - это центр блока, но нам нужно, чтобы первая строка была сверху
+        # Поэтому start_y = base_y - (общая высота блока / 2)
         total_height = (len(lines) - 1) * line_height
         start_y = base_y - total_height / 2
         
@@ -473,23 +476,21 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
             
             # Обрабатываем поля по порядку из конфига
             for i, cfg in enumerate(config):
-                if i < len(random_data):
+                # Для полей 10 и 11 (индексы 9 и 10) используем 10-ю строку данных
+                if i == 9 or i == 10:  # Серия и номер (нижний и верхний)
+                    text = format_passport_number(random_data[9])
+                    curr_f = f_num if f_num else f1
+                elif i < len(random_data):
                     text = str(random_data[i])
-                    
-                    # Для поля 9 (индекс 8) - код подразделения - используем свои данные
-                    if i == 8:  # Код подразделения
-                        curr_f = f2 if f2 else f1
-                    # Для полей 10 и 11 (индексы 9 и 10) - серия и номер - используем 10-ю строку
-                    elif i == 9 or i == 10:  # Серия и номер (верхний и нижний)
-                        text = format_passport_number(random_data[9])
-                        curr_f = f_num if f_num else f1
-                    elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
+                    if f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                         curr_f = f2
                     else:
                         curr_f = f1
-                    
-                    font = ImageFont.truetype(curr_f, cfg["size"])
-                    process_field(img, text, font, cfg)
+                else:
+                    continue
+                
+                font = ImageFont.truetype(curr_f, cfg["size"])
+                process_field(img, text, font, cfg)
             
             # SCODE строки
             if has_scode and scode_config and f3:
@@ -689,23 +690,21 @@ async def process_data(message: types.Message, state: FSMContext):
                 
                 # Обрабатываем поля по порядку из конфига
                 for i, cfg in enumerate(config):
-                    if i < len(lines):
+                    # Для полей 10 и 11 (индексы 9 и 10) используем 10-ю строку данных
+                    if i == 9 or i == 10:  # Серия и номер (нижний и верхний)
+                        text = format_passport_number(lines[9])
+                        curr_f = f_num if f_num else f1
+                    elif i < len(lines):
                         text = str(lines[i])
-                        
-                        # Для поля 9 (индекс 8) - код подразделения - используем свои данные
-                        if i == 8:  # Код подразделения
-                            curr_f = f2 if f2 else f1
-                        # Для полей 10 и 11 (индексы 9 и 10) - серия и номер - используем 10-ю строку
-                        elif i == 9 or i == 10:  # Серия и номер (верхний и нижний)
-                            text = format_passport_number(lines[9])
-                            curr_f = f_num if f_num else f1
-                        elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
+                        if f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                             curr_f = f2
                         else:
                             curr_f = f1
-                        
-                        font = ImageFont.truetype(curr_f, cfg["size"])
-                        process_field(img, text, font, cfg)
+                    else:
+                        continue
+                    
+                    font = ImageFont.truetype(curr_f, cfg["size"])
+                    process_field(img, text, font, cfg)
                 
                 # SCODE строки
                 if has_scode and scode_config and f3:
@@ -851,23 +850,21 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                     
                     # Обрабатываем поля по порядку из конфига
                     for i, cfg in enumerate(config):
-                        if i < len(data_lines):
+                        # Для полей 10 и 11 (индексы 9 и 10) используем 10-ю строку данных
+                        if i == 9 or i == 10:  # Серия и номер (нижний и верхний)
+                            text = format_passport_number(data_lines[9])
+                            curr_f = f_num if f_num else f1
+                        elif i < len(data_lines):
                             text = str(data_lines[i])
-                            
-                            # Для поля 9 (индекс 8) - код подразделения - используем свои данные
-                            if i == 8:  # Код подразделения
-                                curr_f = f2 if f2 else f1
-                            # Для полей 10 и 11 (индексы 9 и 10) - серия и номер - используем 10-ю строку
-                            elif i == 9 or i == 10:  # Серия и номер (верхний и нижний)
-                                text = format_passport_number(data_lines[9])
-                                curr_f = f_num if f_num else f1
-                            elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
+                            if f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                                 curr_f = f2
                             else:
                                 curr_f = f1
-                            
-                            font = ImageFont.truetype(curr_f, cfg["size"])
-                            process_field(img, text, font, cfg)
+                        else:
+                            continue
+                        
+                        font = ImageFont.truetype(curr_f, cfg["size"])
+                        process_field(img, text, font, cfg)
                     
                     if has_scode and scode_config and f3:
                         scode_lines = generate_scode_lines(data_lines)
