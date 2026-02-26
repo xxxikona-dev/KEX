@@ -182,136 +182,21 @@ def get_config(category):
         print(f"Ошибка загрузки конфига: {e}")
         return None, None, False
 
-# --- ФУНКЦИЯ ДЛЯ ПРОВЕРКИ ВСЕХ ШРИФТОВ ---
-def debug_all_fonts():
-    """Проверяет все доступные шрифты"""
-    print("\n=== ПРОВЕРКА ВСЕХ ШРИФТОВ ===")
-    print(f"📁 Базовая папка fonts: {FONTS_DIR}")
-    
-    # Проверяем корневую папку fonts
-    if os.path.exists(FONTS_DIR):
-        fonts = [f for f in os.listdir(FONTS_DIR) if f.lower().endswith(('.ttf', '.otf'))]
-        if fonts:
-            print(f"✅ В корневой папке найдены шрифты: {fonts}")
-        else:
-            print(f"❌ В корневой папке нет шрифтов")
-    else:
-        print(f"❌ Корневая папка fonts не существует: {FONTS_DIR}")
-        try:
-            os.makedirs(FONTS_DIR)
-            print(f"✅ Создана папка fonts: {FONTS_DIR}")
-        except:
-            print(f"❌ Не удалось создать папку fonts")
-    
-    # Проверяем все категории
-    categories = get_categories()
-    for category in categories:
-        category_font_dir = os.path.join(FONTS_DIR, category)
-        if os.path.exists(category_font_dir):
-            print(f"\n📁 Категория: {category}")
-            print(f"   Папка шрифтов: {category_font_dir}")
-            
-            fonts = [f for f in os.listdir(category_font_dir) if f.lower().endswith(('.ttf', '.otf'))]
-            if fonts:
-                print(f"   ✅ Найдены шрифты: {fonts}")
-                
-                # Проверяем конкретно шрифт 3
-                font_3_exists = any(f.startswith('3') and f.lower().endswith(('.ttf', '.otf')) for f in fonts)
-                if font_3_exists:
-                    font_3_path = next(os.path.join(category_font_dir, f) for f in fonts if f.startswith('3') and f.lower().endswith(('.ttf', '.otf')))
-                    print(f"   ✅ Шрифт 3 найден: {font_3_path}")
-                    
-                    # Пробуем загрузить шрифт
-                    try:
-                        test_font = ImageFont.truetype(font_3_path, 12)
-                        print(f"   ✅ Шрифт 3 успешно загружается в PIL")
-                    except Exception as e:
-                        print(f"   ❌ Ошибка загрузки шрифта 3: {e}")
-                else:
-                    print(f"   ❌ Шрифт 3 НЕ найден в папке {category}")
-                    
-                # Проверяем другие шрифты
-                for font_file in fonts:
-                    font_path = os.path.join(category_font_dir, font_file)
-                    try:
-                        test_font = ImageFont.truetype(font_path, 12)
-                        print(f"   ✅ Шрифт {font_file} загружается")
-                    except Exception as e:
-                        print(f"   ❌ Шрифт {font_file} не загружается: {e}")
-            else:
-                print(f"   ❌ В папке {category} нет шрифтов")
-        else:
-            print(f"\n📁 Категория: {category}")
-            print(f"   ❌ Папка шрифтов не существует: {category_font_dir}")
-            try:
-                os.makedirs(category_font_dir)
-                print(f"   ✅ Создана папка шрифтов для {category}")
-            except:
-                print(f"   ❌ Не удалось создать папку шрифтов")
-    
-    print("\n" + "=" * 50)
-
-# --- УЛУЧШЕННАЯ ФУНКЦИЯ ЗАГРУЗКИ ШРИФТОВ ---
 def get_font_path(category, font_type="1"):
-    """
-    Улучшенная функция загрузки шрифтов с подробной отладкой
-    """
-    print(f"\n🔍 Поиск шрифта {font_type} для категории {category}")
-    
-    # Список возможных расширений
+    """Получает путь к шрифту"""
     exts = ['.ttf', '.otf', '.TTF', '.OTF']
+    folder = os.path.join(FONTS_DIR, category)
     
-    # 1. Сначала ищем в папке категории
-    category_font_dir = os.path.join(FONTS_DIR, category)
-    if os.path.exists(category_font_dir):
-        print(f"  📁 Проверяем папку: {category_font_dir}")
-        
-        # Пробуем точное совпадение
+    if os.path.exists(folder):
         for ext in exts:
-            exact_path = os.path.join(category_font_dir, font_type + ext)
-            if os.path.exists(exact_path):
-                print(f"  ✅ Найден точный файл: {exact_path}")
-                return exact_path
+            path = os.path.join(folder, font_type + ext)
+            if os.path.exists(path):
+                return path
         
-        # Ищем любой файл, начинающийся с font_type
-        for file in os.listdir(category_font_dir):
+        for file in os.listdir(folder):
             if file.startswith(font_type) and any(file.lower().endswith(ext.lower()) for ext in exts):
-                full_path = os.path.join(category_font_dir, file)
-                print(f"  ✅ Найден похожий файл: {full_path}")
-                return full_path
-        
-        print(f"  ❌ В папке категории нет шрифта {font_type}")
-    else:
-        print(f"  ❌ Папка категории не существует: {category_font_dir}")
+                return os.path.join(folder, file)
     
-    # 2. Если не нашли в папке категории, ищем в общей папке fonts
-    if os.path.exists(FONTS_DIR):
-        print(f"  📁 Проверяем общую папку: {FONTS_DIR}")
-        
-        # Ищем файл с таким же именем
-        for ext in exts:
-            common_path = os.path.join(FONTS_DIR, font_type + ext)
-            if os.path.exists(common_path):
-                print(f"  ✅ Найден в общей папке: {common_path}")
-                return common_path
-        
-        # Ищем любой похожий файл
-        for file in os.listdir(FONTS_DIR):
-            if file.startswith(font_type) and any(file.lower().endswith(ext.lower()) for ext in exts):
-                full_path = os.path.join(FONTS_DIR, file)
-                print(f"  ✅ Найден похожий в общей папке: {full_path}")
-                return full_path
-        
-        print(f"  ❌ В общей папке нет шрифта {font_type}")
-    else:
-        print(f"  ❌ Общая папка fonts не существует: {FONTS_DIR}")
-    
-    # 3. Для шрифта 3 (scode) пробуем использовать шрифт 1 как запасной
-    if font_type == "3":
-        print(f"  ⚠️ Шрифт 3 не найден, пробуем использовать шрифт 1")
-        return get_font_path(category, "1")
-    
-    print(f"  ❌ НЕ НАЙДЕНО НИКАКИХ ШРИФТОВ для {font_type}")
     return None
 
 def format_passport_number(text):
@@ -323,23 +208,21 @@ def format_passport_number(text):
 # --- ФУНКЦИЯ ДЛЯ ТРАНСЛИТЕРАЦИИ ---
 def transliterate_to_english(text):
     """
-    Преобразует русские буквы в английские и удаляет все спецсимволы
+    Преобразует русские буквы в английские
     """
-    # Словарь транслитерации
     translit_dict = {
         'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
         'Ж': 'ZH', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
         'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
         'Ф': 'F', 'Х': 'KH', 'Ц': 'TS', 'Ч': 'CH', 'Ш': 'SH', 'Щ': 'SHCH',
         'Ы': 'Y', 'Э': 'E', 'Ю': 'YU', 'Я': 'YA',
-        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
-        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
-        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
-        'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
-        'ы': 'y', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+        'а': 'A', 'б': 'B', 'в': 'V', 'г': 'G', 'д': 'D', 'е': 'E', 'ё': 'E',
+        'ж': 'ZH', 'з': 'Z', 'и': 'I', 'й': 'Y', 'к': 'K', 'л': 'L', 'м': 'M',
+        'н': 'N', 'о': 'O', 'п': 'P', 'р': 'R', 'с': 'S', 'т': 'T', 'у': 'U',
+        'ф': 'F', 'х': 'KH', 'ц': 'TS', 'ч': 'CH', 'ш': 'SH', 'щ': 'SHCH',
+        'ы': 'Y', 'э': 'E', 'ю': 'YU', 'я': 'YA'
     }
     
-    # Сначала транслитерируем
     result = []
     for char in text:
         if char in translit_dict:
@@ -348,8 +231,6 @@ def transliterate_to_english(text):
             result.append(char)
     
     text = ''.join(result)
-    
-    # Удаляем все символы, кроме букв и цифр
     text = re.sub(r'[^A-Za-z0-9]', '', text)
     
     return text.upper()
@@ -358,25 +239,22 @@ def transliterate_to_english(text):
 def generate_scode_lines(data):
     """
     Генерирует две строки в формате scode из 10 строк данных
-    data: список из 10 строк введенных пользователем
     """
-    # Извлекаем данные и применяем транслитерацию
-    lastname = transliterate_to_english(data[0])  # Фамилия
-    firstname = transliterate_to_english(data[1])  # Имя
-    patronymic = transliterate_to_english(data[2])  # Отчество
-    birth_date = data[3].strip()  # Дата рождения (ДД.ММ.ГГГГ)
-    gender = data[5].strip().upper()  # Пол
-    issue_date = data[7].strip()  # Дата выдачи (ДД.ММ.ГГГГ)
-    department_code = re.sub(r'[^0-9]', '', data[8])  # Код подразделения (только цифры)
-    passport_number = re.sub(r'[^0-9]', '', data[9])  # Серия и номер (только цифры)
+    # Извлекаем данные
+    lastname = transliterate_to_english(data[0])
+    firstname = transliterate_to_english(data[1])
+    patronymic = transliterate_to_english(data[2])
+    birth_date = data[3].strip()
+    gender = data[5].strip().upper()
+    issue_date = data[7].strip()
+    department_code = re.sub(r'[^0-9]', '', data[8])
+    passport_number = re.sub(r'[^0-9]', '', data[9])
     
     # Парсим даты
     birth_day, birth_month, birth_year = birth_date.split('.')
     issue_day, issue_month, issue_year = issue_date.split('.')
     
-    # Формируем первую строку
-    # PNRUS + ФАМИЛИЯ + << + ИМЯ + < + ОТЧЕСТВО + 3 + <<<<<<<<<<<
-    # Обрезаем до нужной длины
+    # Первая строка
     if len(lastname) > 9:
         lastname = lastname[:9]
     if len(firstname) > 7:
@@ -385,36 +263,25 @@ def generate_scode_lines(data):
         patronymic = patronymic[:8]
     
     line1 = f"PNRUS{lastname}<<{firstname}<{patronymic}3"
-    # Добавляем << до нужной длины (44 символа)
     line1 = line1.ljust(44, '<')
     
-    # Формируем вторую строку
-    # Серия и номер (10 цифр) + RUS + дата рождения + пол + <<<<<<< + 7 + дата выдачи + код + < + рандом
-    
-    # Серия и номер (10 цифр)
+    # Вторая строка
     if len(passport_number) > 10:
         passport_number = passport_number[:10]
     elif len(passport_number) < 10:
         passport_number = passport_number.ljust(10, '0')
     
-    # Дата рождения в формате YYMMDD
     birth_short = f"{birth_year[-2:]}{birth_month}{birth_day}"
-    
-    # Дата выдачи в формате YYMMDD
     issue_short = f"{issue_year[-2:]}{issue_month}{issue_day}"
     
-    # Код подразделения (6 цифр)
     if len(department_code) > 6:
         department_code = department_code[:6]
     elif len(department_code) < 6:
         department_code = department_code.ljust(6, '0')
     
-    # Генерируем рандомные 2 цифры
     random_digits = f"{random.randint(0, 99):02d}"
     
     line2 = f"{passport_number}RUS{birth_short}{gender[0]}{'<' * 7}7{issue_short}{department_code}<{random_digits}"
-    
-    # Дополняем до 44 символов
     line2 = line2.ljust(44, '<')
     
     return [line1, line2]
@@ -439,7 +306,6 @@ def generate_random_data():
     issue_year = year + random.randint(18, 25)
     issue_date = f"{random.randint(1, 28):02d}.{random.randint(1, 12):02d}.{issue_year}"
     
-    # Генерируем 10-значный номер паспорта
     passport_num = f"{random.randint(1000, 9999)}{random.randint(100000, 999999)}"
     
     return [
@@ -455,9 +321,9 @@ def generate_random_data():
         passport_num[:10]
     ]
 
-# --- ВОДЯНЫЕ ЗНАКИ (УМЕРЕННО ЯРКИЕ) ---
+# --- ВОДЯНЫЕ ЗНАКИ ---
 def add_watermarks(image):
-    """Добавляет умеренно яркие водяные знаки на изображение"""
+    """Добавляет водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
@@ -466,15 +332,7 @@ def add_watermarks(image):
     
     try:
         font_path = os.path.join(FONTS_DIR, "arial.ttf")
-        if not os.path.exists(font_path):
-            font_files = []
-            for root, dirs, files in os.walk(FONTS_DIR):
-                for file in files:
-                    if file.endswith(('.ttf', '.TTF', '.otf', '.OTF')):
-                        font_files.append(os.path.join(root, file))
-            font_path = font_files[0] if font_files else None
-        
-        if font_path:
+        if os.path.exists(font_path):
             font = ImageFont.truetype(font_path, 40)
         else:
             font = ImageFont.load_default()
@@ -487,33 +345,99 @@ def add_watermarks(image):
     for y in range(-height, height * 2, spacing):
         for x in range(-width, width * 2, spacing * 2):
             text = random.choice(watermark_texts)
-            
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
-            
             angle = random.randint(-30, 30)
             
-            txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
+            txt_img = Image.new("RGBA", (300, 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
-            
-            # Увеличиваем непрозрачность до 60-100
-            txt_draw.text((50, 50), text, font=font, 
-                         fill=(255, 255, 255, random.randint(60, 100)), 
-                         anchor="mm")
-            
+            txt_draw.text((150, 50), text, font=font, fill=(255, 255, 255, 80), anchor="mm")
             txt_img = txt_img.rotate(angle, expand=1, resample=Image.BICUBIC)
             
             watermark_layer.alpha_composite(txt_img, (x + random.randint(-50, 50), y + random.randint(-50, 50)))
     
-    # Добавляем немного точек
     for _ in range(300):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        draw.point((x, y), fill=(255, 255, 255, random.randint(60, 100)))
+        draw.point((x, y), fill=(255, 255, 255, 80))
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
+
+# --- ЭФФЕКТЫ РЕАЛИЗМА ---
+def add_noise_to_layer(layer, intensity=8):
+    """Добавляет небольшой шум к слою"""
+    width, height = layer.size
+    pixels = layer.load()
+    for y in range(height):
+        for x in range(width):
+            if x < width and y < height:
+                try:
+                    r, g, b, a = pixels[x, y]
+                    if a > 0:
+                        noise = random.randint(-intensity, intensity)
+                        new_a = max(0, min(255, a + noise))
+                        pixels[x, y] = (r, g, b, new_a)
+                except:
+                    pass
+    return layer
+
+# --- ИСПРАВЛЕННАЯ ОТРИСОВКА ТЕКСТА ---
+def draw_text_on_layer(img, text, font, config):
+    """Рисует текст на изображении"""
+    text = str(text).upper()
+    
+    # Создаем временное изображение для текста
+    bbox = font.getbbox(text)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    
+    # Добавляем отступы
+    padding = 20
+    txt_layer = Image.new("RGBA", (tw + padding*2, th + padding*2), (0, 0, 0, 0))
+    d = ImageDraw.Draw(txt_layer)
+    
+    # Цвет текста с альфа-каналом
+    fill_color = config["color"] + (config.get("alpha", 255),)
+    
+    # Рисуем текст по центру временного слоя
+    d.text((padding + tw//2, padding + th//2), text, font=font, fill=fill_color, anchor="mm")
+    
+    # Добавляем шум
+    txt_layer = add_noise_to_layer(txt_layer)
+    
+    # Поворот
+    if config.get("rotate", 0) != 0:
+        txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
+    
+    # Размытие
+    if config.get("blur", 0) > 0:
+        txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
+    
+    # Вставляем на основное изображение
+    lw, lh = txt_layer.size
+    offset_x = int(config["coord"][0] - (lw // 2))
+    offset_y = int(config["coord"][1] - (lh // 2))
+    
+    img.alpha_composite(txt_layer, (offset_x, offset_y))
+    return img
+
+def process_field(img, text, font, config):
+    """Обрабатывает поле с учетом многострочности"""
+    text = text.upper()
+    
+    if config.get("lines", 1) > 1:
+        chars_limit = config.get("width", 30)
+        max_lines = config.get("lines", 3)
+        lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)[:max_lines]
+        
+        base_x, base_y = config["coord"]
+        line_step = config["size"] + config.get("spacing", 10)
+        start_y = base_y - line_step
+        
+        for i, line in enumerate(lines):
+            line_cfg = config.copy()
+            line_cfg["coord"] = (base_x, start_y + (i * line_step))
+            draw_text_on_layer(img, line, font, line_cfg)
+    else:
+        draw_text_on_layer(img, text, font, config)
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
 async def create_preview_with_watermark(category, template_name, random_data, scode_config=None, has_scode=False):
@@ -521,83 +445,48 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         config, _, _ = get_config(category)
         if not config:
             return None
-            
-        # Загружаем все необходимые шрифты
+        
         f1 = get_font_path(category, "1")
         f2 = get_font_path(category, "2")
         f3 = get_font_path(category, "3")
         f_num = get_font_path(category, "num")
         
         if not f1:
-            print("❌ Нет основного шрифта!")
             return None
         
         template_path = os.path.join(TEMPLATES_DIR, category, template_name)
         with Image.open(template_path) as img:
             img = img.convert("RGBA")
             
-            # Обрабатываем основные поля
+            # Основные поля
             for i, cfg in enumerate(config):
                 if i < len(random_data):
                     text = str(random_data[i])
                     
-                    # Определяем шрифт
-                    if i == 9:  # Серия и номер
+                    if i == 9:
                         curr_f = f_num if f_num else f1
-                    elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
+                    elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                         curr_f = f2
-                    else: 
+                    else:
                         curr_f = f1
                     
-                    try:
-                        font = ImageFont.truetype(curr_f, cfg["size"])
-                        process_field(img, text, font, cfg)
-                    except Exception as e:
-                        print(f"Ошибка загрузки шрифта {curr_f}: {e}")
+                    font = ImageFont.truetype(curr_f, cfg["size"])
+                    draw_text_on_layer(img, text, font, cfg)
             
-            # Если есть scode, генерируем и добавляем две строки
-            if has_scode and scode_config:
-                print(f"\n=== ОТЛАДКА SCODE ДЛЯ ПРЕДПРОСМОТРА ===")
-                print(f"Категория: {category}")
-                print(f"scode_config: {scode_config}")
+            # SCODE строки
+            if has_scode and scode_config and f3:
+                scode_lines = generate_scode_lines(random_data)
+                line_height = scode_config["size"] + scode_config.get("spacing", 10)
                 
-                scode_font_path = f3 if f3 else f1
-                print(f"Путь к шрифту для scode: {scode_font_path}")
-                
-                if scode_font_path and os.path.exists(scode_font_path):
-                    print(f"✅ Файл шрифта существует")
+                for j, line in enumerate(scode_lines):
+                    line_cfg = scode_config.copy()
+                    if j == 1:
+                        line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                     
-                    try:
-                        # Проверяем, что шрифт можно загрузить
-                        test_font = ImageFont.truetype(scode_font_path, 12)
-                        print(f"✅ Шрифт успешно загружается")
-                        
-                        scode_lines = generate_scode_lines(random_data)
-                        print(f"Сгенерированы scode строки: {scode_lines}")
-                        
-                        line_height = scode_config["size"] + scode_config.get("spacing", 10)
-                        
-                        for j, line in enumerate(scode_lines):
-                            if j == 1:
-                                line_cfg = scode_config.copy()
-                                line_cfg["coord"] = (scode_config["coord"][0], 
-                                                    scode_config["coord"][1] + line_height)
-                            else:
-                                line_cfg = scode_config
-                            
-                            try:
-                                font = ImageFont.truetype(scode_font_path, line_cfg["size"])
-                                process_field(img, line, font, line_cfg)
-                                print(f"✅ scode строка {j+1} нарисована")
-                            except Exception as e:
-                                print(f"❌ Ошибка при рисовании scode строки {j+1}: {e}")
-                    except Exception as e:
-                        print(f"❌ Ошибка при загрузке шрифта: {e}")
-                else:
-                    print(f"❌ Шрифт не найден или не существует")
+                    font = ImageFont.truetype(f3, line_cfg["size"])
+                    draw_text_on_layer(img, line, font, line_cfg)
             
             img_with_watermarks = add_watermarks(img)
-            
             res = img_with_watermarks.convert("RGB")
             buf = BytesIO()
             res.save(buf, format="JPEG", quality=85)
@@ -607,60 +496,6 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         logging.error(f"Ошибка создания предпросмотра: {e}")
         return None
 
-# --- ЭФФЕКТЫ РЕАЛИЗМА ---
-def add_noise_to_layer(layer, intensity=12):
-    width, height = layer.size
-    pixels = layer.load()
-    for y in range(height):
-        for x in range(width):
-            r, g, b, a = pixels[x, y]
-            if a > 0:
-                noise = random.randint(-intensity, intensity)
-                new_a = max(0, min(255, a + noise))
-                pixels[x, y] = (r, g, b, new_a)
-    return layer
-
-# --- ОТРИСОВКА ---
-def draw_text_on_layer(img, text, font, config):
-    text = str(text).upper()
-    bbox = font.getbbox(text)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    
-    txt_layer = Image.new("RGBA", (tw + 400, th + 400), (0, 0, 0, 0))
-    d = ImageDraw.Draw(txt_layer)
-    fill_color = config["color"] + (config.get("alpha", 225),) 
-    d.text(((tw + 400) // 2, (th + 400) // 2), text, font=font, fill=fill_color, anchor="mm")
-    
-    txt_layer = add_noise_to_layer(txt_layer)
-    if config.get("rotate", 0) != 0:
-        txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC)
-    if config.get("blur", 0) > 0:
-        txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
-
-    lw, lh = txt_layer.size
-    offset_x = int(config["coord"][0] - (lw // 2))
-    offset_y = int(config["coord"][1] - (lh // 2))
-    img.alpha_composite(txt_layer, (offset_x, offset_y))
-
-def process_field(img, text, font, config):
-    text = text.upper()
-    if config.get("lines", 1) > 1:
-        chars_limit = config.get("width", 30)
-        max_lines = config.get("lines", 3)
-        lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)[:max_lines]
-        
-        base_x, base_y = config["coord"]
-        line_step = config["size"] + config.get("spacing", 10) 
-        
-        start_y = base_y - line_step
-
-        for i, line in enumerate(lines):
-            line_cfg = config.copy()
-            line_cfg["coord"] = (base_x, start_y + (i * line_step))
-            draw_text_on_layer(img, line, font, line_cfg)
-    else:
-        draw_text_on_layer(img, text, font, config)
-
 # --- ХЕНДЛЕРЫ ---
 
 @dp.message(CommandStart())
@@ -668,7 +503,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     
     categories = get_categories()
-    if not categories: 
+    if not categories:
         return await message.answer("❌ Папка templates пуста!")
     
     kb = [[InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"cat_{cat}")] for cat in categories]
@@ -681,7 +516,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     await message.answer(
         f"<b>Выберите категорию документа:</b>\n\n{price_text}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), 
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
         parse_mode="HTML"
     )
     await state.set_state(Form.choosing_category)
@@ -692,15 +527,14 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
     cat_path = os.path.join(TEMPLATES_DIR, category)
     tpls = sorted([f for f in os.listdir(cat_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
     
-    if not tpls: 
+    if not tpls:
         return await call.answer("❌ Нет шаблонов!", show_alert=True)
     
-    # Получаем конфиг, scode конфиг и наличие scode
     config, scode_config, has_scode = get_config(category)
     
     await state.update_data(
-        category=category, 
-        tpls=tpls, 
+        category=category,
+        tpls=tpls,
         current_index=0,
         scode_config=scode_config,
         has_scode=has_scode
@@ -709,7 +543,6 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
     random_data = generate_random_data()
     await state.update_data(preview_data=random_data)
     
-    # Создаем предпросмотр
     preview_buf = await create_preview_with_watermark(category, tpls[0], random_data, scode_config, has_scode)
     
     if preview_buf:
@@ -739,7 +572,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     scode_config = data.get("scode_config")
     has_scode = data.get("has_scode", False)
     
-    if not category or not tpls: 
+    if not category or not tpls:
         return await call.answer("Сессия истекла! Введите /start", show_alert=True)
     
     act, idx = call.data.split("_")
@@ -803,7 +636,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
 @dp.message(Form.inputting_data)
 async def process_data(message: types.Message, state: FSMContext):
     lines = [l.strip() for l in message.text.split('\n') if l.strip()]
-    if len(lines) < 10: 
+    if len(lines) < 10:
         return await message.answer(f"⚠️ Нужно 10 строк! Сейчас {len(lines)}")
     
     data = await state.get_data()
@@ -812,21 +645,17 @@ async def process_data(message: types.Message, state: FSMContext):
     scode_config = data.get('scode_config')
     has_scode = data.get('has_scode', False)
     
-    # Сохраняем введенные данные
     user_data = "\n".join(lines)
     user_id = message.from_user.id
     
-    # Проверяем, является ли пользователь админом
+    # Админы получают фото бесплатно
     if user_id in ADMIN_IDS:
-        # Админы получают фото бесплатно
         try:
-            # Загружаем конфиг
             config, _, _ = get_config(category)
             if not config:
                 await message.answer("❌ Ошибка загрузки конфигурации")
                 return
             
-            # Загружаем шрифты
             f1 = get_font_path(category, "1")
             f2 = get_font_path(category, "2")
             f3 = get_font_path(category, "3")
@@ -840,66 +669,34 @@ async def process_data(message: types.Message, state: FSMContext):
             with Image.open(template_path) as img:
                 img = img.convert("RGBA")
                 
-                # Обрабатываем основные поля
+                # Основные поля
                 for i, cfg in enumerate(config):
                     if i < len(lines):
                         text = str(lines[i])
                         
                         if i == 9:
                             curr_f = f_num if f_num else f1
-                        elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
+                        elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                             curr_f = f2
-                        else: 
+                        else:
                             curr_f = f1
                         
-                        try:
-                            font = ImageFont.truetype(curr_f, cfg["size"])
-                            process_field(img, text, font, cfg)
-                        except Exception as e:
-                            print(f"Ошибка загрузки шрифта: {e}")
+                        font = ImageFont.truetype(curr_f, cfg["size"])
+                        draw_text_on_layer(img, text, font, cfg)
                 
-                # Если есть scode, генерируем и добавляем строки
-                if has_scode and scode_config:
-                    print(f"\n=== ОТЛАДКА SCODE ===")
-                    print(f"Категория: {category}")
-                    print(f"scode_config: {scode_config}")
+                # SCODE строки
+                if has_scode and scode_config and f3:
+                    scode_lines = generate_scode_lines(lines)
+                    line_height = scode_config["size"] + scode_config.get("spacing", 10)
                     
-                    scode_font_path = f3 if f3 else f1
-                    print(f"Путь к шрифту для scode: {scode_font_path}")
-                    
-                    if scode_font_path and os.path.exists(scode_font_path):
-                        print(f"✅ Файл шрифта существует")
+                    for j, line in enumerate(scode_lines):
+                        line_cfg = scode_config.copy()
+                        if j == 1:
+                            line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                         
-                        try:
-                            # Проверяем, что шрифт можно загрузить
-                            test_font = ImageFont.truetype(scode_font_path, 12)
-                            print(f"✅ Шрифт успешно загружается")
-                            
-                            scode_lines = generate_scode_lines(lines)
-                            print(f"Сгенерированы scode строки: {scode_lines}")
-                            
-                            line_height = scode_config["size"] + scode_config.get("spacing", 10)
-                            
-                            for j, line in enumerate(scode_lines):
-                                if j == 1:
-                                    line_cfg = scode_config.copy()
-                                    line_cfg["coord"] = (scode_config["coord"][0], 
-                                                        scode_config["coord"][1] + line_height)
-                                else:
-                                    line_cfg = scode_config
-                                
-                                try:
-                                    font = ImageFont.truetype(scode_font_path, line_cfg["size"])
-                                    process_field(img, line, font, line_cfg)
-                                    print(f"✅ scode строка {j+1} нарисована")
-                                except Exception as e:
-                                    print(f"❌ Ошибка при рисовании scode строки {j+1}: {e}")
-                        except Exception as e:
-                            print(f"❌ Ошибка при загрузке шрифта: {e}")
-                    else:
-                        print(f"❌ Шрифт не найден или не существует")
+                        font = ImageFont.truetype(f3, line_cfg["size"])
+                        draw_text_on_layer(img, line, font, line_cfg)
                 
-                # Сохраняем результат
                 res = img.convert("RGB")
                 buf = BytesIO()
                 res.save(buf, format="JPEG", quality=95)
@@ -916,16 +713,14 @@ async def process_data(message: types.Message, state: FSMContext):
             await message.answer(f"❌ Ошибка: {str(e)}")
             return
     
-    # Для обычных пользователей - создаем счет
+    # Обычные пользователи - оплата
     if not crypto:
         await message.answer("❌ Платежная система недоступна. Попробуйте позже.")
         return
     
-    # Генерируем уникальный ID платежа
     payment_id = str(uuid.uuid4())
     
     try:
-        # Создаем инвойс в CryptoBot
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=PRICE_PER_PHOTO,
@@ -933,17 +728,13 @@ async def process_data(message: types.Message, state: FSMContext):
             payload=payment_id
         )
         
-        # Получаем URL для оплаты
         if hasattr(invoice, 'pay_url'):
             pay_url = invoice.pay_url
         elif hasattr(invoice, 'url'):
             pay_url = invoice.url
-        elif hasattr(invoice, 'bot_invoice_url'):
-            pay_url = invoice.bot_invoice_url
         else:
             raise Exception("Не удалось найти URL для оплаты")
         
-        # Получаем ID инвойса
         if hasattr(invoice, 'invoice_id'):
             invoice_id = invoice.invoice_id
         elif hasattr(invoice, 'id'):
@@ -951,10 +742,8 @@ async def process_data(message: types.Message, state: FSMContext):
         else:
             raise Exception("Не удалось найти ID инвойса")
         
-        # Сохраняем запись о платеже
         create_payment_record(payment_id, user_id, invoice_id, category, template, user_data)
         
-        # Создаем клавиатуру с кнопкой для оплаты
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{payment_id}")]
@@ -987,7 +776,6 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
         return
     
     try:
-        # Получаем информацию о платеже из БД
         payment_info = get_payment_by_id(payment_id)
         
         if not payment_info:
@@ -1004,7 +792,6 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             await call.answer("Платеж уже обработан!", show_alert=True)
             return
         
-        # Получаем инвойс по ID
         invoice_id = None
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -1020,25 +807,18 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
                 invoice = invoices[0] if invoices else None
             except:
-                try:
-                    invoice = await crypto.get_invoice(invoice_id=invoice_id)
-                except:
-                    invoice = None
+                invoice = None
             
             if invoice and getattr(invoice, 'status', None) == 'paid':
-                # Платеж подтвержден - генерируем фото
                 update_payment_status(payment_id, "completed")
                 
-                # Разбираем сохраненные данные
                 data_lines = user_data.split('\n')
-                
-                # Загружаем конфиг
                 config, scode_config, has_scode = get_config(category)
+                
                 if not config:
                     await call.message.edit_text("❌ Ошибка загрузки конфигурации")
                     return
                 
-                # Загружаем шрифты
                 f1 = get_font_path(category, "1")
                 f2 = get_font_path(category, "2")
                 f3 = get_font_path(category, "3")
@@ -1052,58 +832,32 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 with Image.open(template_path) as img:
                     img = img.convert("RGBA")
                     
-                    # Обрабатываем основные поля
                     for i, cfg in enumerate(config):
                         if i < len(data_lines):
                             text = str(data_lines[i])
                             
                             if i == 9:
                                 curr_f = f_num if f_num else f1
-                            elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text): 
+                            elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                                 curr_f = f2
-                            else: 
+                            else:
                                 curr_f = f1
                             
-                            try:
-                                font = ImageFont.truetype(curr_f, cfg["size"])
-                                process_field(img, text, font, cfg)
-                            except Exception as e:
-                                print(f"Ошибка загрузки шрифта: {e}")
+                            font = ImageFont.truetype(curr_f, cfg["size"])
+                            draw_text_on_layer(img, text, font, cfg)
                     
-                    # Если есть scode, генерируем и добавляем строки
-                    if has_scode and scode_config:
-                        print(f"\n=== ОТЛАДКА SCODE (ПЛАТЕЖ) ===")
+                    if has_scode and scode_config and f3:
+                        scode_lines = generate_scode_lines(data_lines)
+                        line_height = scode_config["size"] + scode_config.get("spacing", 10)
                         
-                        scode_font_path = f3 if f3 else f1
-                        print(f"Путь к шрифту для scode: {scode_font_path}")
-                        
-                        if scode_font_path and os.path.exists(scode_font_path):
-                            try:
-                                test_font = ImageFont.truetype(scode_font_path, 12)
-                                print(f"✅ Шрифт успешно загружается")
-                                
-                                scode_lines = generate_scode_lines(data_lines)
-                                
-                                line_height = scode_config["size"] + scode_config.get("spacing", 10)
-                                
-                                for j, line in enumerate(scode_lines):
-                                    if j == 1:
-                                        line_cfg = scode_config.copy()
-                                        line_cfg["coord"] = (scode_config["coord"][0], 
-                                                            scode_config["coord"][1] + line_height)
-                                    else:
-                                        line_cfg = scode_config
-                                    
-                                    try:
-                                        font = ImageFont.truetype(scode_font_path, line_cfg["size"])
-                                        process_field(img, line, font, line_cfg)
-                                        print(f"✅ scode строка {j+1} нарисована")
-                                    except Exception as e:
-                                        print(f"❌ Ошибка при рисовании scode строки: {e}")
-                            except Exception as e:
-                                print(f"❌ Ошибка при загрузке шрифта: {e}")
+                        for j, line in enumerate(scode_lines):
+                            line_cfg = scode_config.copy()
+                            if j == 1:
+                                line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
+                            
+                            font = ImageFont.truetype(f3, line_cfg["size"])
+                            draw_text_on_layer(img, line, font, line_cfg)
                     
-                    # Сохраняем результат
                     res = img.convert("RGB")
                     buf = BytesIO()
                     res.save(buf, format="JPEG", quality=95)
@@ -1126,7 +880,6 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
 
 @dp.message(Command("stats"))
 async def cmd_stats(message: types.Message):
-    """Статистика платежей (только для админов)"""
     user_id = message.from_user.id
     
     if user_id not in ADMIN_IDS:
@@ -1150,10 +903,6 @@ async def cmd_stats(message: types.Message):
     await message.answer(stats_text, parse_mode="HTML")
 
 async def main():
-    # Запускаем проверку шрифтов
-    debug_all_fonts()
-    
-    # Запускаем бота
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
