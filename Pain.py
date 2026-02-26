@@ -208,19 +208,19 @@ def format_passport_number(text):
 # --- ФУНКЦИЯ ДЛЯ ТРАНСЛИТЕРАЦИИ ---
 def transliterate_to_english(text):
     """
-    Преобразует русские буквы в английские
+    Преобразует русские буквы в английские по заданным правилам
     """
     translit_dict = {
-        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
-        'Ж': 'ZH', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': '2',
+        'Ж': 'J', 'З': 'Z', 'И': 'I', 'Й': 'Q', 'К': 'K', 'Л': 'L', 'М': 'M',
         'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
-        'Ф': 'F', 'Х': 'KH', 'Ц': 'TS', 'Ч': 'CH', 'Ш': 'SH', 'Щ': 'SHCH',
-        'Ы': 'Y', 'Э': 'E', 'Ю': 'YU', 'Я': 'YA',
-        'а': 'A', 'б': 'B', 'в': 'V', 'г': 'G', 'д': 'D', 'е': 'E', 'ё': 'E',
-        'ж': 'ZH', 'з': 'Z', 'и': 'I', 'й': 'Y', 'к': 'K', 'л': 'L', 'м': 'M',
+        'Ф': 'F', 'Х': 'H', 'Ц': 'C', 'Ч': '3', 'Ш': '4', 'Щ': 'W', 'Ъ': 'X',
+        'Ы': 'Y', 'Ь': '9', 'Э': '6', 'Ю': '7', 'Я': '8',
+        'а': 'A', 'б': 'B', 'в': 'V', 'г': 'G', 'д': 'D', 'е': 'E', 'ё': '2',
+        'ж': 'J', 'з': 'Z', 'и': 'I', 'й': 'Q', 'к': 'K', 'л': 'L', 'м': 'M',
         'н': 'N', 'о': 'O', 'п': 'P', 'р': 'R', 'с': 'S', 'т': 'T', 'у': 'U',
-        'ф': 'F', 'х': 'KH', 'ц': 'TS', 'ч': 'CH', 'ш': 'SH', 'щ': 'SHCH',
-        'ы': 'Y', 'э': 'E', 'ю': 'YU', 'я': 'YA'
+        'ф': 'F', 'х': 'H', 'ц': 'C', 'ч': '3', 'ш': '4', 'щ': 'W', 'ъ': 'X',
+        'ы': 'Y', 'ь': '9', 'э': '6', 'ю': '7', 'я': '8'
     }
     
     result = []
@@ -228,12 +228,15 @@ def transliterate_to_english(text):
         if char in translit_dict:
             result.append(translit_dict[char])
         else:
-            result.append(char)
+            # Оставляем латинские буквы и цифры как есть
+            if char.isalpha() and char.isascii():
+                result.append(char.upper())
+            elif char.isdigit():
+                result.append(char)
+            # Остальные символы (пробелы, дефисы и т.д.) убираем
     
     text = ''.join(result)
-    text = re.sub(r'[^A-Za-z0-9]', '', text)
-    
-    return text.upper()
+    return text
 
 # --- ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ SCODE СТРОК ---
 def generate_scode_lines(data):
@@ -288,7 +291,7 @@ def generate_scode_lines(data):
 
 # --- ГЕНЕРАЦИЯ РАНДОМНЫХ ДАННЫХ ---
 def generate_random_data():
-    first_names = ["АЛЕКСАНДР", "ДМИТРИЙ", "МАКСИМ", "СЕРГЕЙ", "АНДРЕЙ", "АЛЕКСЕЙ", "ИВАН", "ЕВГЕНИЙ", "МИХАИЛ", "ВЛАДИМИР"]
+    first_names = ["АЛЕКСАНДР", "ДМИТРИЙ", "МАКСИМ", "СЕРГЕЙ", "АНДРЕЙ", "АЛЕКСЕЙ", "ИВАН", "ЕВГЕНИЙ", "МИХАИл", "ВЛАДИМИР"]
     last_names = ["ИВАНОВ", "ПЕТРОВ", "СИДОРОВ", "СМИРНОВ", "КУЗНЕЦОВ", "ПОПОВ", "ВАСИЛЬЕВ", "ЗАЙЦЕВ", "СОКОЛОВ", "МИХАЙЛОВ"]
     patronymics = ["АЛЕКСАНДРОВИЧ", "ДМИТРИЕВИЧ", "МАКСИМОВИЧ", "СЕРГЕЕВИЧ", "АНДРЕЕВИЧ", "АЛЕКСЕЕВИЧ", "ИВАНОВИЧ", "ЕВГЕНЬЕВИЧ", "МИХАЙЛОВИЧ", "ВЛАДИМИРОВИЧ"]
     birth_places = ["ГОР. МОСКВА", "ГОР. САНКТ-ПЕТЕРБУРГ", "ГОР. НОВОСИБИРСК", "ГОР. ЕКАТЕРИНБУРГ", "ГОР. КАЗАНЬ"]
@@ -321,7 +324,7 @@ def generate_random_data():
         passport_num[:10]
     ]
 
-# --- ВОДЯНЫЕ ЗНАКИ ---
+# --- ИСПРАВЛЕННЫЕ ВОДЯНЫЕ ЗНАКИ ---
 def add_watermarks(image):
     """Добавляет водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
@@ -331,8 +334,21 @@ def add_watermarks(image):
     watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ"]
     
     try:
-        font_path = os.path.join(FONTS_DIR, "arial.ttf")
-        if os.path.exists(font_path):
+        # Пробуем найти шрифт для водяных знаков
+        font_path = None
+        possible_fonts = [
+            os.path.join(FONTS_DIR, "arial.ttf"),
+            os.path.join(FONTS_DIR, "Arial.ttf"),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+        ]
+        
+        for path in possible_fonts:
+            if os.path.exists(path):
+                font_path = path
+                break
+        
+        if font_path:
             font = ImageFont.truetype(font_path, 40)
         else:
             font = ImageFont.load_default()
@@ -345,19 +361,33 @@ def add_watermarks(image):
     for y in range(-height, height * 2, spacing):
         for x in range(-width, width * 2, spacing * 2):
             text = random.choice(watermark_texts)
+            
+            # Получаем размеры текста
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
             angle = random.randint(-30, 30)
             
-            txt_img = Image.new("RGBA", (300, 100), (0, 0, 0, 0))
+            # Создаем слой для текста
+            txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
-            txt_draw.text((150, 50), text, font=font, fill=(255, 255, 255, 80), anchor="mm")
+            
+            # Рисуем текст с прозрачностью
+            txt_draw.text((50 + text_width//2, 50 + text_height//2), text, font=font, 
+                         fill=(255, 255, 255, 70), anchor="mm")
+            
+            # Поворачиваем
             txt_img = txt_img.rotate(angle, expand=1, resample=Image.BICUBIC)
             
-            watermark_layer.alpha_composite(txt_img, (x + random.randint(-50, 50), y + random.randint(-50, 50)))
+            # Вставляем на слой водяных знаков
+            watermark_layer.alpha_composite(txt_img, (x + random.randint(-30, 30), y + random.randint(-30, 30)))
     
-    for _ in range(300):
+    # Добавляем точки
+    for _ in range(200):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        draw.point((x, y), fill=(255, 255, 255, 80))
+        draw.point((x, y), fill=(255, 255, 255, 50))
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
@@ -369,39 +399,38 @@ def add_noise_to_layer(layer, intensity=8):
     pixels = layer.load()
     for y in range(height):
         for x in range(width):
-            if x < width and y < height:
-                try:
-                    r, g, b, a = pixels[x, y]
-                    if a > 0:
-                        noise = random.randint(-intensity, intensity)
-                        new_a = max(0, min(255, a + noise))
-                        pixels[x, y] = (r, g, b, new_a)
-                except:
-                    pass
+            try:
+                r, g, b, a = pixels[x, y]
+                if a > 0:
+                    noise = random.randint(-intensity, intensity)
+                    new_a = max(0, min(255, a + noise))
+                    pixels[x, y] = (r, g, b, new_a)
+            except:
+                pass
     return layer
 
-# --- ИСПРАВЛЕННАЯ ОТРИСОВКА ТЕКСТА ---
+# --- ИСПРАВЛЕННАЯ ОТРИСОВКА ---
 def draw_text_on_layer(img, text, font, config):
-    """Рисует текст на изображении"""
+    """Рисует текст на слое"""
     text = str(text).upper()
     
-    # Создаем временное изображение для текста
+    # Получаем размеры текста
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # Добавляем отступы
-    padding = 20
+    # Создаем слой для текста с запасом
+    padding = 50
     txt_layer = Image.new("RGBA", (tw + padding*2, th + padding*2), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    # Цвет текста с альфа-каналом
-    fill_color = config["color"] + (config.get("alpha", 255),)
+    # Цвет с альфа-каналом
+    fill_color = config["color"] + (config.get("alpha", 225),)
     
-    # Рисуем текст по центру временного слоя
+    # Рисуем текст в центре слоя
     d.text((padding + tw//2, padding + th//2), text, font=font, fill=fill_color, anchor="mm")
     
     # Добавляем шум
-    txt_layer = add_noise_to_layer(txt_layer)
+    txt_layer = add_noise_to_layer(txt_layer, intensity=8)
     
     # Поворот
     if config.get("rotate", 0) != 0:
@@ -424,19 +453,28 @@ def process_field(img, text, font, config):
     text = text.upper()
     
     if config.get("lines", 1) > 1:
-        chars_limit = config.get("width", 30)
-        max_lines = config.get("lines", 3)
-        lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)[:max_lines]
+        # Многострочный текст
+        chars_limit = int(config.get("width", 30))
+        max_lines = int(config.get("lines", 3))
+        line_spacing = float(config.get("spacing", 10))
+        
+        # Разбиваем текст на строки
+        lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)
+        lines = lines[:max_lines]  # Ограничиваем количество строк
         
         base_x, base_y = config["coord"]
-        line_step = config["size"] + config.get("spacing", 10)
-        start_y = base_y - line_step
+        line_height = config["size"] + line_spacing
+        
+        # Вычисляем начальную позицию Y для первой строки
+        # Первая строка должна быть на позиции base_y - (количество строк - 1) * line_height / 2
+        start_y = base_y - ((len(lines) - 1) * line_height) / 2
         
         for i, line in enumerate(lines):
             line_cfg = config.copy()
-            line_cfg["coord"] = (base_x, start_y + (i * line_step))
+            line_cfg["coord"] = (base_x, start_y + (i * line_height))
             draw_text_on_layer(img, line, font, line_cfg)
     else:
+        # Одна строка
         draw_text_on_layer(img, text, font, config)
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
@@ -471,7 +509,7 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
                         curr_f = f1
                     
                     font = ImageFont.truetype(curr_f, cfg["size"])
-                    draw_text_on_layer(img, text, font, cfg)
+                    process_field(img, text, font, cfg)
             
             # SCODE строки
             if has_scode and scode_config and f3:
@@ -484,7 +522,7 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
                         line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                     
                     font = ImageFont.truetype(f3, line_cfg["size"])
-                    draw_text_on_layer(img, line, font, line_cfg)
+                    process_field(img, line, font, line_cfg)
             
             img_with_watermarks = add_watermarks(img)
             res = img_with_watermarks.convert("RGB")
@@ -682,7 +720,7 @@ async def process_data(message: types.Message, state: FSMContext):
                             curr_f = f1
                         
                         font = ImageFont.truetype(curr_f, cfg["size"])
-                        draw_text_on_layer(img, text, font, cfg)
+                        process_field(img, text, font, cfg)
                 
                 # SCODE строки
                 if has_scode and scode_config and f3:
@@ -695,7 +733,7 @@ async def process_data(message: types.Message, state: FSMContext):
                             line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                         
                         font = ImageFont.truetype(f3, line_cfg["size"])
-                        draw_text_on_layer(img, line, font, line_cfg)
+                        process_field(img, line, font, line_cfg)
                 
                 res = img.convert("RGB")
                 buf = BytesIO()
@@ -713,14 +751,16 @@ async def process_data(message: types.Message, state: FSMContext):
             await message.answer(f"❌ Ошибка: {str(e)}")
             return
     
-    # Обычные пользователи - оплата
+    # Проверяем наличие CryptoBot
     if not crypto:
         await message.answer("❌ Платежная система недоступна. Попробуйте позже.")
         return
     
+    # Генерируем уникальный ID платежа
     payment_id = str(uuid.uuid4())
     
     try:
+        # Создаем инвойс в CryptoBot
         invoice = await crypto.create_invoice(
             asset='USDT',
             amount=PRICE_PER_PHOTO,
@@ -728,22 +768,32 @@ async def process_data(message: types.Message, state: FSMContext):
             payload=payment_id
         )
         
+        # Получаем URL для оплаты
+        pay_url = None
         if hasattr(invoice, 'pay_url'):
             pay_url = invoice.pay_url
         elif hasattr(invoice, 'url'):
             pay_url = invoice.url
-        else:
+        elif hasattr(invoice, 'bot_invoice_url'):
+            pay_url = invoice.bot_invoice_url
+        
+        if not pay_url:
             raise Exception("Не удалось найти URL для оплаты")
         
+        # Получаем ID инвойса
+        invoice_id = None
         if hasattr(invoice, 'invoice_id'):
             invoice_id = invoice.invoice_id
         elif hasattr(invoice, 'id'):
             invoice_id = invoice.id
-        else:
+        
+        if not invoice_id:
             raise Exception("Не удалось найти ID инвойса")
         
+        # Сохраняем запись о платеже
         create_payment_record(payment_id, user_id, invoice_id, category, template, user_data)
         
+        # Создаем клавиатуру с кнопкой для оплаты
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить", url=pay_url)],
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{payment_id}")]
@@ -776,6 +826,7 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
         return
     
     try:
+        # Получаем информацию о платеже из БД
         payment_info = get_payment_by_id(payment_id)
         
         if not payment_info:
@@ -792,6 +843,7 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
             await call.answer("Платеж уже обработан!", show_alert=True)
             return
         
+        # Получаем инвойс по ID
         invoice_id = None
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -807,18 +859,25 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 invoices = await crypto.get_invoices(invoice_ids=[invoice_id])
                 invoice = invoices[0] if invoices else None
             except:
-                invoice = None
+                try:
+                    invoice = await crypto.get_invoice(invoice_id=invoice_id)
+                except:
+                    invoice = None
             
-            if invoice and getattr(invoice, 'status', None) == 'paid':
+            if invoice and hasattr(invoice, 'status') and invoice.status == 'paid':
+                # Платеж подтвержден - генерируем фото
                 update_payment_status(payment_id, "completed")
                 
+                # Разбираем сохраненные данные
                 data_lines = user_data.split('\n')
-                config, scode_config, has_scode = get_config(category)
                 
+                # Загружаем конфиг
+                config, scode_config, has_scode = get_config(category)
                 if not config:
                     await call.message.edit_text("❌ Ошибка загрузки конфигурации")
                     return
                 
+                # Загружаем шрифты
                 f1 = get_font_path(category, "1")
                 f2 = get_font_path(category, "2")
                 f3 = get_font_path(category, "3")
@@ -832,6 +891,7 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 with Image.open(template_path) as img:
                     img = img.convert("RGBA")
                     
+                    # Обрабатываем основные поля
                     for i, cfg in enumerate(config):
                         if i < len(data_lines):
                             text = str(data_lines[i])
@@ -844,8 +904,9 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                                 curr_f = f1
                             
                             font = ImageFont.truetype(curr_f, cfg["size"])
-                            draw_text_on_layer(img, text, font, cfg)
+                            process_field(img, text, font, cfg)
                     
+                    # Если есть scode, генерируем и добавляем строки
                     if has_scode and scode_config and f3:
                         scode_lines = generate_scode_lines(data_lines)
                         line_height = scode_config["size"] + scode_config.get("spacing", 10)
@@ -856,8 +917,9 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                                 line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                             
                             font = ImageFont.truetype(f3, line_cfg["size"])
-                            draw_text_on_layer(img, line, font, line_cfg)
+                            process_field(img, line, font, line_cfg)
                     
+                    # Сохраняем результат
                     res = img.convert("RGB")
                     buf = BytesIO()
                     res.save(buf, format="JPEG", quality=95)
