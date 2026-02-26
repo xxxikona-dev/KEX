@@ -38,10 +38,10 @@ FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "payments.db")
 
 # ID администраторов (бесплатное создание фото)
-ADMIN_IDS = [5153650495, 8225633174]  # Добавьте ID админов
+ADMIN_IDS = [5153650495, 8225633174]
 
 # Цена одной генерации в USDT
-PRICE_PER_PHOTO = 1  # 1 USDT за фото
+PRICE_PER_PHOTO = 1
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 bot = Bot(token=TOKEN, session=AiohttpSession())
@@ -199,12 +199,11 @@ def get_font_path(category, font_type="1"):
     
     return None
 
-# --- ИСПРАВЛЕННЫЙ ФОРМАТ СЕРИИ И НОМЕРА ---
+# --- ФОРМАТ СЕРИИ И НОМЕРА ---
 def format_passport_number(text):
     """Форматирует серию и номер: 00  00  000000 (два пробела)"""
     clean = text.replace(" ", "")
     if len(clean) == 10 and clean.isdigit():
-        # Формат: первые 2 цифры, два пробела, следующие 2 цифры, два пробела, последние 6 цифр
         return f"{clean[:2]}  {clean[2:4]}  {clean[4:]}"
     return text
 
@@ -236,17 +235,14 @@ def transliterate_to_english(text):
                 result.append(char.upper())
             elif char.isdigit():
                 result.append(char)
-            # Остальные символы (пробелы, дефисы и т.д.) убираем
     
-    text = ''.join(result)
-    return text
+    return ''.join(result)
 
 # --- ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ SCODE СТРОК ---
 def generate_scode_lines(data):
     """
     Генерирует две строки в формате scode из 10 строк данных
     """
-    # Извлекаем данные
     lastname = transliterate_to_english(data[0])
     firstname = transliterate_to_english(data[1])
     patronymic = transliterate_to_english(data[2])
@@ -256,7 +252,6 @@ def generate_scode_lines(data):
     department_code = re.sub(r'[^0-9]', '', data[8])
     passport_number = re.sub(r'[^0-9]', '', data[9])
     
-    # Парсим даты
     birth_day, birth_month, birth_year = birth_date.split('.')
     issue_day, issue_month, issue_year = issue_date.split('.')
     
@@ -329,7 +324,6 @@ def generate_random_data():
 
 # --- ВОДЯНЫЕ ЗНАКИ ---
 def add_watermarks(image):
-    """Добавляет водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
@@ -337,7 +331,6 @@ def add_watermarks(image):
     watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ"]
     
     try:
-        # Пробуем найти шрифт для водяных знаков
         font_path = None
         possible_fonts = [
             os.path.join(FONTS_DIR, "arial.ttf"),
@@ -386,12 +379,10 @@ def add_watermarks(image):
         y = random.randint(0, height - 1)
         draw.point((x, y), fill=(255, 255, 255, random.randint(60, 120)))
     
-    watermarked = Image.alpha_composite(watermarked, watermark_layer)
-    return watermarked
+    return Image.alpha_composite(watermarked, watermark_layer)
 
 # --- ЭФФЕКТЫ РЕАЛИЗМА ---
 def add_noise_to_layer(layer, intensity=8):
-    """Добавляет небольшой шум к слою"""
     width, height = layer.size
     pixels = layer.load()
     for y in range(height):
@@ -406,64 +397,51 @@ def add_noise_to_layer(layer, intensity=8):
                 pass
     return layer
 
-# --- ОТРИСОВКА ---
+# --- ИСПРАВЛЕННАЯ ОТРИСОВКА ---
 def draw_text_on_layer(img, text, font, config):
-    """Рисует текст на слое"""
     text = str(text).upper()
     
-    # Получаем размеры текста
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # Создаем слой для текста с запасом
     padding = 50
     txt_layer = Image.new("RGBA", (tw + padding*2, th + padding*2), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    # Цвет с альфа-каналом
     fill_color = config["color"] + (config.get("alpha", 225),)
-    
-    # Рисуем текст в центре слоя
     d.text((padding + tw//2, padding + th//2), text, font=font, fill=fill_color, anchor="mm")
     
-    # Добавляем шум
     txt_layer = add_noise_to_layer(txt_layer, intensity=8)
     
-    # Поворот
     if config.get("rotate", 0) != 0:
         txt_layer = txt_layer.rotate(config["rotate"], expand=True, resample=Image.BICUBIC, fillcolor=(0, 0, 0, 0))
     
-    # Размытие
     if config.get("blur", 0) > 0:
         txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
     
-    # Вставляем на основное изображение
     lw, lh = txt_layer.size
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
     
     img.alpha_composite(txt_layer, (offset_x, offset_y))
-    return img
 
 def process_field(img, text, font, config):
-    """Обрабатывает поле с учетом многострочности"""
     text = text.upper()
     
     if config.get("lines", 1) > 1:
-        # Многострочный текст
         chars_limit = int(config.get("width", 30))
         max_lines = int(config.get("lines", 3))
         line_spacing = float(config.get("spacing", 10))
         
-        # Разбиваем текст на строки
         lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)
         lines = lines[:max_lines]
         
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # ВАЖНО: base_y в конфиге - это ЦЕНТР блока текста
-        # Вычисляем позицию ПЕРВОЙ строки
+        # ПРАВИЛЬНОЕ ПОЗИЦИОНИРОВАНИЕ:
+        # base_y - это центр блока текста
+        # Вычисляем позицию первой строки
         total_height = (len(lines) - 1) * line_height
         start_y = base_y - total_height / 2
         
@@ -472,7 +450,6 @@ def process_field(img, text, font, config):
             line_cfg["coord"] = (base_x, start_y + (i * line_height))
             draw_text_on_layer(img, line, font, line_cfg)
     else:
-        # Одна строка
         draw_text_on_layer(img, text, font, config)
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
@@ -494,14 +471,17 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         with Image.open(template_path) as img:
             img = img.convert("RGBA")
             
-            # Основные поля (10 полей)
-            for i, cfg in enumerate(config[:10]):  # Берем только первые 10 полей
+            # Обрабатываем поля по порядку из конфига
+            for i, cfg in enumerate(config):
                 if i < len(random_data):
                     text = str(random_data[i])
                     
-                    # Для 10-го поля (серия и номер) применяем форматирование
-                    if i == 9:  # Серия и номер
-                        text = format_passport_number(text)
+                    # Для поля 9 (индекс 8) - код подразделения - используем свои данные
+                    if i == 8:  # Код подразделения
+                        curr_f = f2 if f2 else f1
+                    # Для полей 10 и 11 (индексы 9 и 10) - серия и номер - используем 10-ю строку
+                    elif i == 9 or i == 10:  # Серия и номер (верхний и нижний)
+                        text = format_passport_number(random_data[9])
                         curr_f = f_num if f_num else f1
                     elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                         curr_f = f2
@@ -707,14 +687,17 @@ async def process_data(message: types.Message, state: FSMContext):
             with Image.open(template_path) as img:
                 img = img.convert("RGBA")
                 
-                # Основные поля (10 полей)
-                for i, cfg in enumerate(config[:10]):  # Берем только первые 10 полей
+                # Обрабатываем поля по порядку из конфига
+                for i, cfg in enumerate(config):
                     if i < len(lines):
                         text = str(lines[i])
                         
-                        # Для 10-го поля (серия и номер) применяем форматирование
-                        if i == 9:  # Серия и номер
-                            text = format_passport_number(text)
+                        # Для поля 9 (индекс 8) - код подразделения - используем свои данные
+                        if i == 8:  # Код подразделения
+                            curr_f = f2 if f2 else f1
+                        # Для полей 10 и 11 (индексы 9 и 10) - серия и номер - используем 10-ю строку
+                        elif i == 9 or i == 10:  # Серия и номер (верхний и нижний)
+                            text = format_passport_number(lines[9])
                             curr_f = f_num if f_num else f1
                         elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                             curr_f = f2
@@ -866,13 +849,17 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 with Image.open(template_path) as img:
                     img = img.convert("RGBA")
                     
-                    # Основные поля (10 полей)
-                    for i, cfg in enumerate(config[:10]):
+                    # Обрабатываем поля по порядку из конфига
+                    for i, cfg in enumerate(config):
                         if i < len(data_lines):
                             text = str(data_lines[i])
                             
-                            if i == 9:
-                                text = format_passport_number(text)
+                            # Для поля 9 (индекс 8) - код подразделения - используем свои данные
+                            if i == 8:  # Код подразделения
+                                curr_f = f2 if f2 else f1
+                            # Для полей 10 и 11 (индексы 9 и 10) - серия и номер - используем 10-ю строку
+                            elif i == 9 or i == 10:  # Серия и номер (верхний и нижний)
+                                text = format_passport_number(data_lines[9])
                                 curr_f = f_num if f_num else f1
                             elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                                 curr_f = f2
