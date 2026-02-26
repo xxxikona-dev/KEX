@@ -230,7 +230,6 @@ def transliterate_to_english(text):
         if char in translit_dict:
             result.append(translit_dict[char])
         else:
-            # Оставляем латинские буквы и цифры как есть
             if char.isalpha() and char.isascii():
                 result.append(char.upper())
             elif char.isdigit():
@@ -442,11 +441,19 @@ def process_field(img, text, font, config):
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # ИСПРАВЛЕНО: Текст всегда начинается с первой строки
-        # base_y в конфиге - это центр блока, но нам нужно, чтобы первая строка была сверху
-        # Поэтому start_y = base_y - (общая высота блока / 2)
-        total_height = (len(lines) - 1) * line_height
-        start_y = base_y - total_height / 2
+        # ПРАВИЛЬНОЕ ПОЗИЦИОНИРОВАНИЕ:
+        # base_y - это центр блока текста
+        # Вычисляем позицию ПЕРВОЙ строки так, чтобы:
+        # - Для 1 строки: центр совпадает с центром строки
+        # - Для 2 строк: центр между строками
+        # - Для 3 строк: центр на второй строке
+        
+        if len(lines) == 1:
+            start_y = base_y
+        elif len(lines) == 2:
+            start_y = base_y - line_height/2
+        else:  # 3 строки
+            start_y = base_y - line_height
         
         for i, line in enumerate(lines):
             line_cfg = config.copy()
@@ -477,7 +484,7 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
             # Обрабатываем поля по порядку из конфига
             for i, cfg in enumerate(config):
                 # Для полей 10 и 11 (индексы 9 и 10) используем 10-ю строку данных
-                if i == 9 or i == 10:  # Серия и номер (нижний и верхний)
+                if i == 9 or i == 10:
                     text = format_passport_number(random_data[9])
                     curr_f = f_num if f_num else f1
                 elif i < len(random_data):
@@ -690,8 +697,7 @@ async def process_data(message: types.Message, state: FSMContext):
                 
                 # Обрабатываем поля по порядку из конфига
                 for i, cfg in enumerate(config):
-                    # Для полей 10 и 11 (индексы 9 и 10) используем 10-ю строку данных
-                    if i == 9 or i == 10:  # Серия и номер (нижний и верхний)
+                    if i == 9 or i == 10:
                         text = format_passport_number(lines[9])
                         curr_f = f_num if f_num else f1
                     elif i < len(lines):
@@ -848,10 +854,8 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 with Image.open(template_path) as img:
                     img = img.convert("RGBA")
                     
-                    # Обрабатываем поля по порядку из конфига
                     for i, cfg in enumerate(config):
-                        # Для полей 10 и 11 (индексы 9 и 10) используем 10-ю строку данных
-                        if i == 9 or i == 10:  # Серия и номер (нижний и верхний)
+                        if i == 9 or i == 10:
                             text = format_passport_number(data_lines[9])
                             curr_f = f_num if f_num else f1
                         elif i < len(data_lines):
