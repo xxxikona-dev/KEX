@@ -756,13 +756,37 @@ async def process_data(message: types.Message, state: FSMContext):
             payload=payment_id
         )
         
-        pay_url = getattr(invoice, 'pay_url', getattr(invoice, 'url', None))
-        if not pay_url:
-            raise Exception("Не удалось найти URL для оплаты")
+        # ИСПРАВЛЕНО: Получаем URL для оплаты
+        pay_url = None
         
-        invoice_id = getattr(invoice, 'invoice_id', getattr(invoice, 'id', None))
+        # Проверяем все возможные варианты атрибутов
+        if hasattr(invoice, 'pay_url'):
+            pay_url = invoice.pay_url
+        elif hasattr(invoice, 'url'):
+            pay_url = invoice.url
+        elif hasattr(invoice, 'bot_invoice_url'):
+            pay_url = invoice.bot_invoice_url
+        elif hasattr(invoice, 'mini_app_invoice_url'):
+            pay_url = invoice.mini_app_invoice_url
+        
+        # Если объект ведет себя как словарь
+        if not pay_url and isinstance(invoice, dict):
+            pay_url = invoice.get('pay_url') or invoice.get('url') or invoice.get('bot_invoice_url')
+        
+        if not pay_url:
+            raise Exception("CryptoBot не вернул ссылку на оплату")
+        
+        # ИСПРАВЛЕНО: Получаем ID инвойса
+        invoice_id = None
+        if hasattr(invoice, 'invoice_id'):
+            invoice_id = invoice.invoice_id
+        elif hasattr(invoice, 'id'):
+            invoice_id = invoice.id
+        elif isinstance(invoice, dict):
+            invoice_id = invoice.get('invoice_id') or invoice.get('id')
+        
         if not invoice_id:
-            raise Exception("Не удалось найти ID инвойса")
+            raise Exception("Не удалось получить ID инвойса")
         
         create_payment_record(payment_id, user_id, invoice_id, category, template, user_data)
         
