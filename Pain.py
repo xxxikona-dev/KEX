@@ -459,18 +459,11 @@ def process_field(img, text, font, config):
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # ВАЖНО: Правильное позиционирование
-        # Первая строка должна быть на позиции base_y - (количество строк - 1) * line_height / 2
-        if len(lines) == 1:
-            # Для одной строки - центр
-            start_y = base_y
-        elif len(lines) == 2:
-            # Для двух строк - первая выше центра, вторая ниже центра
-            start_y = base_y - line_height/2
-        else:  # 3 строки
-            # Для трех строк - равномерно распределяем
-            start_y = base_y - line_height
-            
+        # ВАЖНО: base_y в конфиге - это ЦЕНТР блока текста
+        # Вычисляем позицию ПЕРВОЙ строки
+        total_height = (len(lines) - 1) * line_height
+        start_y = base_y - total_height / 2
+        
         for i, line in enumerate(lines):
             line_cfg = config.copy()
             line_cfg["coord"] = (base_x, start_y + (i * line_height))
@@ -505,8 +498,6 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
                     
                     # Определяем шрифт
                     if i == 9:  # Серия и номер
-                        curr_f = f_num if f_num else f1
-                    elif i == 10 and has_scode:  # Вторая серия и номер для scode
                         curr_f = f_num if f_num else f1
                     elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                         curr_f = f2
@@ -720,8 +711,6 @@ async def process_data(message: types.Message, state: FSMContext):
                         # Определяем шрифт
                         if i == 9:  # Серия и номер
                             curr_f = f_num if f_num else f1
-                        elif i == 10 and has_scode:  # Вторая серия и номер для scode
-                            curr_f = f_num if f_num else f1
                         elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                             curr_f = f2
                         else:
@@ -877,8 +866,6 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                             text = str(data_lines[i])
                             
                             if i == 9:
-                                curr_f = f_num if f_num else f1
-                            elif i == 10 and has_scode:
                                 curr_f = f_num if f_num else f1
                             elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                                 curr_f = f2
