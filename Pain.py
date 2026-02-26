@@ -9,6 +9,7 @@ import sqlite3
 from io import BytesIO
 from datetime import datetime
 import uuid
+import unicodedata
 
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
@@ -122,50 +123,66 @@ def get_categories():
     if not os.path.exists(TEMPLATES_DIR): return []
     return [d for d in os.listdir(TEMPLATES_DIR) if os.path.isdir(os.path.join(TEMPLATES_DIR, d))]
 
+def parse_config_line(line):
+    """Парсит строку конфигурации"""
+    vals = [float(x.strip()) for x in line.split(',')]
+    return {
+        "coord": (vals[0], vals[1]),
+        "size": int(vals[2]),
+        "rotate": vals[3],
+        "color": (int(vals[4]), int(vals[5]), int(vals[6])),
+        "alpha": int(vals[7]),
+        "width": int(vals[8]),
+        "spacing": vals[9],
+        "lines": int(vals[10]),
+        "blur": vals[11] if len(vals) > 11 else 0.25
+    }
+
 def get_config(category):
+    """
+    Загружает конфигурацию из coo.txt
+    Если на 13 строке есть слово 'scode', то на 14 строке берется конфигурация для scode
+    """
     path = os.path.join(TEMPLATES_DIR, category, "coo.txt")
     config = []
     scode_config = None
+    has_scode = False
     
-    if not os.path.exists(path): return None, None
+    if not os.path.exists(path): return None, None, False
     
     try:
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
-            for line in lines:
-                line = line.split('#')[0].strip()
-                if not line: 
-                    continue
-                
-                # Проверяем наличие метки scode
-                if line.lower() == 'scode':
-                    continue
-                
-                vals = [float(x.strip()) for x in line.split(',')]
-                config.append({
-                    "coord": (vals[0], vals[1]),
-                    "size": int(vals[2]),
-                    "rotate": vals[3],
-                    "color": (int(vals[4]), int(vals[5]), int(vals[6])),
-                    "alpha": int(vals[7]),
-                    "width": int(vals[8]),
-                    "spacing": vals[9],
-                    "lines": int(vals[10]),
-                    "blur": vals[11] if len(vals) > 11 else 0.25
-                })
+            line_num = 0
+            scode_line_num = -1
             
-            # Проверяем, есть ли в файле строка scode
-            with open(path, "r", encoding="utf-8") as f_check:
-                content = f_check.read()
-                if 'scode' in content.lower():
-                    # Берем последнюю конфигурацию для scode (должна быть одна строка на обе строки)
-                    scode_config = config[-1] if config else None
-                    config = config[:-1]  # Убираем scode из основного конфига
-                    
-        return config, scode_config
+            for line in lines:
+                line_num += 1
+                # Убираем комментарии
+                clean_line = line.split('#')[0].strip()
+                
+                # Проверяем, есть ли на этой строке слово scode
+                if clean_line.lower() == 'scode':
+                    has_scode = True
+                    scode_line_num = line_num
+                    continue
+                
+                if not clean_line:
+                    continue
+                
+                # Парсим конфигурацию
+                cfg = parse_config_line(clean_line)
+                
+                # Если это строка сразу после scode, сохраняем как scode_config
+                if has_scode and line_num == scode_line_num + 1:
+                    scode_config = cfg
+                else:
+                    config.append(cfg)
+        
+        return config, scode_config, has_scode
     except Exception as e:
         print(f"Ошибка загрузки конфига: {e}")
-        return None, None
+        return None, None, False
 
 def get_font_path(category, font_type="1"):
     """Получает путь к шрифту. font_type может быть "1", "2", "3", "num" и т.д."""
@@ -192,28 +209,62 @@ def format_passport_number(text):
         return f"{clean[:2]} {clean[2:4]} {clean[4:]}"
     return text
 
+# --- ФУНКЦИЯ ДЛЯ ТРАНСЛИТЕРАЦИИ ---
+def transliterate_to_english(text):
+    """
+    Преобразует русские буквы в английские и удаляет все спецсимволы
+    """
+    # Словарь транслитерации
+    translit_dict = {
+        'А': 'A', 'Б': 'B', 'В': 'V', 'Г': 'G', 'Д': 'D', 'Е': 'E', 'Ё': 'E',
+        'Ж': 'ZH', 'З': 'Z', 'И': 'I', 'Й': 'Y', 'К': 'K', 'Л': 'L', 'М': 'M',
+        'Н': 'N', 'О': 'O', 'П': 'P', 'Р': 'R', 'С': 'S', 'Т': 'T', 'У': 'U',
+        'Ф': 'F', 'Х': 'KH', 'Ц': 'TS', 'Ч': 'CH', 'Ш': 'SH', 'Щ': 'SHCH',
+        'Ы': 'Y', 'Э': 'E', 'Ю': 'YU', 'Я': 'YA',
+        'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd', 'е': 'e', 'ё': 'e',
+        'ж': 'zh', 'з': 'z', 'и': 'i', 'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm',
+        'н': 'n', 'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't', 'у': 'u',
+        'ф': 'f', 'х': 'kh', 'ц': 'ts', 'ч': 'ch', 'ш': 'sh', 'щ': 'shch',
+        'ы': 'y', 'э': 'e', 'ю': 'yu', 'я': 'ya'
+    }
+    
+    # Сначала транслитерируем
+    result = []
+    for char in text:
+        if char in translit_dict:
+            result.append(translit_dict[char])
+        else:
+            result.append(char)
+    
+    text = ''.join(result)
+    
+    # Удаляем все символы, кроме букв и цифр
+    text = re.sub(r'[^A-Za-z0-9]', '', text)
+    
+    return text.upper()
+
 # --- ФУНКЦИЯ ДЛЯ ГЕНЕРАЦИИ SCODE СТРОК ---
 def generate_scode_lines(data):
     """
     Генерирует две строки в формате scode из 10 строк данных
     data: список из 10 строк введенных пользователем
     """
-    # Извлекаем данные
-    lastname = data[0].strip().upper()  # Фамилия
-    firstname = data[1].strip().upper()  # Имя
-    patronymic = data[2].strip().upper()  # Отчество
+    # Извлекаем данные и применяем транслитерацию
+    lastname = transliterate_to_english(data[0])  # Фамилия
+    firstname = transliterate_to_english(data[1])  # Имя
+    patronymic = transliterate_to_english(data[2])  # Отчество
     birth_date = data[3].strip()  # Дата рождения (ДД.ММ.ГГГГ)
     gender = data[5].strip().upper()  # Пол
     issue_date = data[7].strip()  # Дата выдачи (ДД.ММ.ГГГГ)
-    department_code = data[8].strip().replace("-", "").replace(" ", "")  # Код подразделения (000-000)
-    passport_number = data[9].strip().replace(" ", "")  # Серия и номер (10 цифр)
+    department_code = re.sub(r'[^0-9]', '', data[8])  # Код подразделения (только цифры)
+    passport_number = re.sub(r'[^0-9]', '', data[9])  # Серия и номер (только цифры)
     
     # Парсим даты
     birth_day, birth_month, birth_year = birth_date.split('.')
     issue_day, issue_month, issue_year = issue_date.split('.')
     
     # Формируем первую строку
-    # PNRUSBUSORGIN<<ALEKSEQ<ALEKSEEVI3<<<<<<<<<<<
+    # PNRUS + ФАМИЛИЯ + << + ИМЯ + < + ОТЧЕСТВО + 3 + <<<<<<<<<<<
     # Обрезаем до нужной длины
     if len(lastname) > 9:
         lastname = lastname[:9]
@@ -223,11 +274,11 @@ def generate_scode_lines(data):
         patronymic = patronymic[:8]
     
     line1 = f"PNRUS{lastname}<<{firstname}<{patronymic}3"
-    # Добавляем <<<<< до нужной длины (44 символа)
+    # Добавляем << до нужной длины (44 символа)
     line1 = line1.ljust(44, '<')
     
     # Формируем вторую строку
-    # 0113589573RUS9707302M<<<<<<<7170807220070<72
+    # Серия и номер (10 цифр) + RUS + дата рождения + пол + <<<<<<< + 7 + дата выдачи + код + < + рандом
     
     # Серия и номер (10 цифр)
     if len(passport_number) > 10:
@@ -293,14 +344,14 @@ def generate_random_data():
         passport_num[:10]
     ]
 
-# --- ВОДЯНЫЕ ЗНАКИ (БОЛЕЕ ЯРКИЕ) ---
+# --- ВОДЯНЫЕ ЗНАКИ (УМЕРЕННО ЯРКИЕ) ---
 def add_watermarks(image):
-    """Добавляет яркие водяные знаки на изображение"""
+    """Добавляет умеренно яркие водяные знаки на изображение"""
     watermarked = image.copy().convert("RGBA")
     watermark_layer = Image.new("RGBA", watermarked.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(watermark_layer)
     
-    watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ", "ПРОБНАЯ ВЕРСИЯ"]
+    watermark_texts = ["DEMO", "SAMPLE", "NOT VALID", "ТЕСТ", "ОБРАЗЕЦ"]
     
     try:
         font_path = os.path.join(FONTS_DIR, "arial.ttf")
@@ -313,45 +364,50 @@ def add_watermarks(image):
             font_path = font_files[0] if font_files else None
         
         if font_path:
-            font = ImageFont.truetype(font_path, 48)  # Увеличил размер
+            font = ImageFont.truetype(font_path, 40)
         else:
             font = ImageFont.load_default()
     except:
         font = ImageFont.load_default()
     
     width, height = watermarked.size
-    spacing = 80  # Уменьшил расстояние для большей плотности
+    spacing = 150
     
     for y in range(-height, height * 2, spacing):
-        for x in range(-width, width * 2, spacing):
+        for x in range(-width, width * 2, spacing * 2):
             text = random.choice(watermark_texts)
-            angle = random.randint(-45, 45)
             
-            # Увеличил непрозрачность
-            opacity = random.randint(80, 150)  # Было 50
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
             
-            txt_img = Image.new("RGBA", (400, 150), (0, 0, 0, 0))
+            angle = random.randint(-30, 30)
+            
+            txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
-            txt_draw.text((200, 75), text, font=font, fill=(255, 255, 255, opacity), anchor="mm")
+            
+            # Увеличиваем непрозрачность до 60-100 (было 20-40)
+            txt_draw.text((50, 50), text, font=font, 
+                         fill=(255, 255, 255, random.randint(60, 100)), 
+                         anchor="mm")
+            
             txt_img = txt_img.rotate(angle, expand=1, resample=Image.BICUBIC)
             
             watermark_layer.alpha_composite(txt_img, (x + random.randint(-50, 50), y + random.randint(-50, 50)))
     
-    # Добавляем дополнительные элементы для яркости
-    for _ in range(100):
-        x = random.randint(0, width)
-        y = random.randint(0, height)
-        size = random.randint(5, 15)
-        opacity = random.randint(100, 200)
-        draw.ellipse((x-size, y-size, x+size, y+size), fill=(255, 255, 255, opacity))
+    # Добавляем немного точек
+    for _ in range(300):
+        x = random.randint(0, width - 1)
+        y = random.randint(0, height - 1)
+        draw.point((x, y), fill=(255, 255, 255, random.randint(60, 100)))
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
-async def create_preview_with_watermark(category, template_name, random_data, scode_config=None):
+async def create_preview_with_watermark(category, template_name, random_data, scode_config=None, has_scode=False):
     try:
-        config, _ = get_config(category)
+        config, _, _ = get_config(category)
         if not config:
             return None
             
@@ -368,8 +424,8 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         with Image.open(template_path) as img:
             img = img.convert("RGBA")
             
-            # Обрабатываем основные 10 полей
-            for i, cfg in enumerate(config[:10]):  # Берем только первые 10 конфигов
+            # Обрабатываем основные поля
+            for i, cfg in enumerate(config):
                 if i < len(random_data):
                     text = str(random_data[i])
                     
@@ -385,19 +441,20 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
                     process_field(img, text, font, cfg)
             
             # Если есть scode, генерируем и добавляем две строки
-            if scode_config and f3:
+            if has_scode and scode_config and f3:
                 scode_lines = generate_scode_lines(random_data)
                 
-                # Обрабатываем две scode строки с одной и той же конфигурацией
-                # Каждая строка будет нарисована отдельно с небольшим смещением по Y
+                # Вычисляем высоту строки для смещения
                 line_height = scode_config["size"] + scode_config.get("spacing", 10)
                 
                 for j, line in enumerate(scode_lines):
-                    # Копируем конфиг и смещаем по Y для второй строки
-                    line_cfg = scode_config.copy()
-                    if j == 1:  # Вторая строка
+                    # Для второй строки смещаем по Y
+                    if j == 1:
+                        line_cfg = scode_config.copy()
                         line_cfg["coord"] = (scode_config["coord"][0], 
                                             scode_config["coord"][1] + line_height)
+                    else:
+                        line_cfg = scode_config
                     
                     font = ImageFont.truetype(f3, line_cfg["size"])
                     process_field(img, line, font, line_cfg)
@@ -501,21 +558,22 @@ async def choose_cat(call: types.CallbackQuery, state: FSMContext):
     if not tpls: 
         return await call.answer("❌ Нет шаблонов!", show_alert=True)
     
-    # Получаем конфиг и scode конфиг
-    config, scode_config = get_config(category)
+    # Получаем конфиг, scode конфиг и наличие scode
+    config, scode_config, has_scode = get_config(category)
     
     await state.update_data(
         category=category, 
         tpls=tpls, 
         current_index=0,
-        scode_config=scode_config
+        scode_config=scode_config,
+        has_scode=has_scode
     )
     
     random_data = generate_random_data()
     await state.update_data(preview_data=random_data)
     
     # Создаем предпросмотр
-    preview_buf = await create_preview_with_watermark(category, tpls[0], random_data, scode_config)
+    preview_buf = await create_preview_with_watermark(category, tpls[0], random_data, scode_config, has_scode)
     
     if preview_buf:
         total_templates = len(tpls)
@@ -542,6 +600,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     category, tpls = data.get("category"), data.get("tpls")
     scode_config = data.get("scode_config")
+    has_scode = data.get("has_scode", False)
     
     if not category or not tpls: 
         return await call.answer("Сессия истекла! Введите /start", show_alert=True)
@@ -583,7 +642,7 @@ async def nav_callback(call: types.CallbackQuery, state: FSMContext):
         random_data = generate_random_data()
         await state.update_data(preview_data=random_data)
         
-        preview_buf = await create_preview_with_watermark(category, tpls[new_idx], random_data, scode_config)
+        preview_buf = await create_preview_with_watermark(category, tpls[new_idx], random_data, scode_config, has_scode)
         
         if preview_buf:
             kb = InlineKeyboardMarkup(inline_keyboard=[[
@@ -614,6 +673,7 @@ async def process_data(message: types.Message, state: FSMContext):
     category = data['category']
     template = data['chosen_tpl']
     scode_config = data.get('scode_config')
+    has_scode = data.get('has_scode', False)
     
     # Сохраняем введенные данные
     user_data = "\n".join(lines)
@@ -624,7 +684,7 @@ async def process_data(message: types.Message, state: FSMContext):
         # Админы получают фото бесплатно
         try:
             # Загружаем конфиг
-            config, _ = get_config(category)
+            config, _, _ = get_config(category)
             if not config:
                 await message.answer("❌ Ошибка загрузки конфигурации")
                 return
@@ -643,8 +703,8 @@ async def process_data(message: types.Message, state: FSMContext):
             with Image.open(template_path) as img:
                 img = img.convert("RGBA")
                 
-                # Обрабатываем основные 10 полей
-                for i, cfg in enumerate(config[:10]):
+                # Обрабатываем основные поля
+                for i, cfg in enumerate(config):
                     if i < len(lines):
                         text = str(lines[i])
                         
@@ -659,16 +719,18 @@ async def process_data(message: types.Message, state: FSMContext):
                         process_field(img, text, font, cfg)
                 
                 # Если есть scode, генерируем и добавляем строки
-                if scode_config and f3:
+                if has_scode and scode_config and f3:
                     scode_lines = generate_scode_lines(lines)
                     
                     line_height = scode_config["size"] + scode_config.get("spacing", 10)
                     
                     for j, line in enumerate(scode_lines):
-                        line_cfg = scode_config.copy()
                         if j == 1:
+                            line_cfg = scode_config.copy()
                             line_cfg["coord"] = (scode_config["coord"][0], 
                                                 scode_config["coord"][1] + line_height)
+                        else:
+                            line_cfg = scode_config
                         
                         font = ImageFont.truetype(f3, line_cfg["size"])
                         process_field(img, line, font, line_cfg)
@@ -807,7 +869,7 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 data_lines = user_data.split('\n')
                 
                 # Загружаем конфиг
-                config, scode_config = get_config(category)
+                config, scode_config, has_scode = get_config(category)
                 if not config:
                     await call.message.edit_text("❌ Ошибка загрузки конфигурации")
                     return
@@ -826,8 +888,8 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 with Image.open(template_path) as img:
                     img = img.convert("RGBA")
                     
-                    # Обрабатываем основные 10 полей
-                    for i, cfg in enumerate(config[:10]):
+                    # Обрабатываем основные поля
+                    for i, cfg in enumerate(config):
                         if i < len(data_lines):
                             text = str(data_lines[i])
                             
@@ -842,16 +904,18 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                             process_field(img, text, font, cfg)
                     
                     # Если есть scode, генерируем и добавляем строки
-                    if scode_config and f3:
+                    if has_scode and scode_config and f3:
                         scode_lines = generate_scode_lines(data_lines)
                         
                         line_height = scode_config["size"] + scode_config.get("spacing", 10)
                         
                         for j, line in enumerate(scode_lines):
-                            line_cfg = scode_config.copy()
                             if j == 1:
+                                line_cfg = scode_config.copy()
                                 line_cfg["coord"] = (scode_config["coord"][0], 
                                                     scode_config["coord"][1] + line_height)
+                            else:
+                                line_cfg = scode_config
                             
                             font = ImageFont.truetype(f3, line_cfg["size"])
                             process_field(img, line, font, line_cfg)
