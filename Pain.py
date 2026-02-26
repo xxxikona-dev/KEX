@@ -400,16 +400,22 @@ def add_noise_to_layer(layer, intensity=8):
 def draw_text_on_layer(img, text, font, config):
     text = str(text).upper()
     
+    # Получаем границы текста для создания временного слоя
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    padding = 50
+    # Запас для поворота и размытия
+    padding = 100 
     txt_layer = Image.new("RGBA", (tw + padding*2, th + padding*2), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
+    # Цвет с альфа-каналом 
     fill_color = config["color"] + (config.get("alpha", 225),)
+    
+    # Рисуем текст строго по центру слоя 
     d.text((padding + tw//2, padding + th//2), text, font=font, fill=fill_color, anchor="mm")
     
+    # Эффекты: шум, поворот, размытие 
     txt_layer = add_noise_to_layer(txt_layer, intensity=8)
     
     if config.get("rotate", 0) != 0:
@@ -418,6 +424,7 @@ def draw_text_on_layer(img, text, font, config):
     if config.get("blur", 0) > 0:
         txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
     
+    # Накладываем слой на основное изображение
     lw, lh = txt_layer.size
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
@@ -427,39 +434,34 @@ def draw_text_on_layer(img, text, font, config):
 def process_field(img, text, font, config):
     text = text.upper()
     
+    # Если разрешено несколько строк [cite: 38]
     if config.get("lines", 1) > 1:
         chars_limit = int(config.get("width", 30))
-        if chars_limit <= 0:
-            chars_limit = 30
+        if chars_limit <= 0: chars_limit = 30
             
         max_lines = int(config.get("lines", 3))
         line_spacing = float(config.get("spacing", 10))
         
+        # Разбиваем текст на строки [cite: 39]
         lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)
         lines = lines[:max_lines]
         
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # ПРАВИЛЬНОЕ ПОЗИЦИОНИРОВАНИЕ:
-        # base_y - это центр блока текста
-        # Вычисляем позицию ПЕРВОЙ строки так, чтобы:
-        # - Для 1 строки: центр совпадает с центром строки
-        # - Для 2 строк: центр между строками
-        # - Для 3 строк: центр на второй строке
-        
-        if len(lines) == 1:
-            start_y = base_y
-        elif len(lines) == 2:
-            start_y = base_y - line_height/2
-        else:  # 3 строки
-            start_y = base_y - line_height
+        # ВАЖНО: Расчет Y для первой строки так, чтобы визуальный центр 
+        # всего блока текста (независимо от кол-ва строк) был в base_y.
+        # Формула: Общая высота текста пополам
+        total_block_height = (len(lines) - 1) * line_height
+        start_y = base_y - (total_block_height / 2)
         
         for i, line in enumerate(lines):
             line_cfg = config.copy()
+            # Смещение каждой строки относительно вычисленного старта
             line_cfg["coord"] = (base_x, start_y + (i * line_height))
             draw_text_on_layer(img, line, font, line_cfg)
     else:
+        # Для одиночной строки просто используем центр [cite: 42]
         draw_text_on_layer(img, text, font, config)
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
