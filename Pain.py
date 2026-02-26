@@ -291,7 +291,7 @@ def generate_scode_lines(data):
 
 # --- ГЕНЕРАЦИЯ РАНДОМНЫХ ДАННЫХ ---
 def generate_random_data():
-    first_names = ["АЛЕКСАНДР", "ДМИТРИЙ", "МАКСИМ", "СЕРГЕЙ", "АНДРЕЙ", "АЛЕКСЕЙ", "ИВАН", "ЕВГЕНИЙ", "МИХАИл", "ВЛАДИМИР"]
+    first_names = ["АЛЕКСАНДР", "ДМИТРИЙ", "МАКСИМ", "СЕРГЕЙ", "АНДРЕЙ", "АЛЕКСЕЙ", "ИВАН", "ЕВГЕНИЙ", "МИХАИЛ", "ВЛАДИМИР"]
     last_names = ["ИВАНОВ", "ПЕТРОВ", "СИДОРОВ", "СМИРНОВ", "КУЗНЕЦОВ", "ПОПОВ", "ВАСИЛЬЕВ", "ЗАЙЦЕВ", "СОКОЛОВ", "МИХАЙЛОВ"]
     patronymics = ["АЛЕКСАНДРОВИЧ", "ДМИТРИЕВИЧ", "МАКСИМОВИЧ", "СЕРГЕЕВИЧ", "АНДРЕЕВИЧ", "АЛЕКСЕЕВИЧ", "ИВАНОВИЧ", "ЕВГЕНЬЕВИЧ", "МИХАЙЛОВИЧ", "ВЛАДИМИРОВИЧ"]
     birth_places = ["ГОР. МОСКВА", "ГОР. САНКТ-ПЕТЕРБУРГ", "ГОР. НОВОСИБИРСК", "ГОР. ЕКАТЕРИНБУРГ", "ГОР. КАЗАНЬ"]
@@ -336,30 +336,43 @@ def add_watermarks(image):
     try:
         # Пробуем найти шрифт для водяных знаков
         font_path = None
+        # Сначала ищем в папке fonts
         possible_fonts = [
             os.path.join(FONTS_DIR, "arial.ttf"),
             os.path.join(FONTS_DIR, "Arial.ttf"),
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+            os.path.join(FONTS_DIR, "DejaVuSans.ttf"),
+            os.path.join(FONTS_DIR, "LiberationSans-Regular.ttf")
         ]
         
-        for path in possible_fonts:
+        # Также проверяем системные шрифты
+        system_fonts = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf"
+        ]
+        
+        all_fonts = possible_fonts + system_fonts
+        
+        for path in all_fonts:
             if os.path.exists(path):
                 font_path = path
+                print(f"✅ Найден шрифт для водяных знаков: {path}")
                 break
         
         if font_path:
-            font = ImageFont.truetype(font_path, 40)
+            font = ImageFont.truetype(font_path, 48)  # Увеличил размер для яркости
         else:
+            print("⚠️ Шрифт не найден, использую стандартный")
             font = ImageFont.load_default()
-    except:
+    except Exception as e:
+        print(f"❌ Ошибка загрузки шрифта: {e}")
         font = ImageFont.load_default()
     
     width, height = watermarked.size
-    spacing = 150
+    spacing = 120  # Уменьшил расстояние для большей плотности
     
     for y in range(-height, height * 2, spacing):
-        for x in range(-width, width * 2, spacing * 2):
+        for x in range(-width, width * 2, spacing):
             text = random.choice(watermark_texts)
             
             # Получаем размеры текста
@@ -367,34 +380,43 @@ def add_watermarks(image):
             text_width = bbox[2] - bbox[0]
             text_height = bbox[3] - bbox[1]
             
-            angle = random.randint(-30, 30)
+            angle = random.randint(-45, 45)
             
             # Создаем слой для текста
             txt_img = Image.new("RGBA", (text_width + 100, text_height + 100), (0, 0, 0, 0))
             txt_draw = ImageDraw.Draw(txt_img)
             
-            # Рисуем текст с прозрачностью
+            # Рисуем текст с хорошей видимостью
+            opacity = random.randint(90, 140)  # Увеличил непрозрачность
             txt_draw.text((50 + text_width//2, 50 + text_height//2), text, font=font, 
-                         fill=(255, 255, 255, 70), anchor="mm")
+                         fill=(255, 255, 255, opacity), anchor="mm", stroke_width=1, stroke_fill=(255, 255, 255, opacity))
             
             # Поворачиваем
             txt_img = txt_img.rotate(angle, expand=1, resample=Image.BICUBIC)
             
             # Вставляем на слой водяных знаков
-            watermark_layer.alpha_composite(txt_img, (x + random.randint(-30, 30), y + random.randint(-30, 30)))
+            watermark_layer.alpha_composite(txt_img, (x, y))
     
-    # Добавляем точки
-    for _ in range(200):
+    # Добавляем много ярких точек
+    for _ in range(500):
         x = random.randint(0, width - 1)
         y = random.randint(0, height - 1)
-        draw.point((x, y), fill=(255, 255, 255, 50))
+        draw.point((x, y), fill=(255, 255, 255, random.randint(60, 120)))
+    
+    # Добавляем линии
+    for _ in range(50):
+        x1 = random.randint(0, width)
+        y1 = random.randint(0, height)
+        x2 = random.randint(0, width)
+        y2 = random.randint(0, height)
+        draw.line([(x1, y1), (x2, y2)], fill=(255, 255, 255, random.randint(40, 80)), width=2)
     
     watermarked = Image.alpha_composite(watermarked, watermark_layer)
     return watermarked
 
 # --- ЭФФЕКТЫ РЕАЛИЗМА ---
-def add_noise_to_layer(layer, intensity=8):
-    """Добавляет небольшой шум к слою"""
+def add_noise_to_layer(layer, intensity=12):
+    """Добавляет шум к слою"""
     width, height = layer.size
     pixels = layer.load()
     for y in range(height):
@@ -403,13 +425,13 @@ def add_noise_to_layer(layer, intensity=8):
                 r, g, b, a = pixels[x, y]
                 if a > 0:
                     noise = random.randint(-intensity, intensity)
-                    new_a = max(0, min(255, a + noise))
+                    new_a = max(20, min(255, a + noise))
                     pixels[x, y] = (r, g, b, new_a)
             except:
                 pass
     return layer
 
-# --- ИСПРАВЛЕННАЯ ОТРИСОВКА ---
+# --- ОТРИСОВКА ТЕКСТА ---
 def draw_text_on_layer(img, text, font, config):
     """Рисует текст на слое"""
     text = str(text).upper()
@@ -430,7 +452,7 @@ def draw_text_on_layer(img, text, font, config):
     d.text((padding + tw//2, padding + th//2), text, font=font, fill=fill_color, anchor="mm")
     
     # Добавляем шум
-    txt_layer = add_noise_to_layer(txt_layer, intensity=8)
+    txt_layer = add_noise_to_layer(txt_layer, intensity=12)
     
     # Поворот
     if config.get("rotate", 0) != 0:
@@ -445,6 +467,7 @@ def draw_text_on_layer(img, text, font, config):
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
     
+    # Используем альфа-композитинг
     img.alpha_composite(txt_layer, (offset_x, offset_y))
     return img
 
@@ -460,19 +483,19 @@ def process_field(img, text, font, config):
         
         # Разбиваем текст на строки
         lines = textwrap.wrap(text, width=chars_limit, break_long_words=False)
-        lines = lines[:max_lines]  # Ограничиваем количество строк
+        lines = lines[:max_lines]
         
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # Вычисляем начальную позицию Y для первой строки
         # Первая строка должна быть на позиции base_y - (количество строк - 1) * line_height / 2
-        start_y = base_y - ((len(lines) - 1) * line_height) / 2
-        
-        for i, line in enumerate(lines):
-            line_cfg = config.copy()
-            line_cfg["coord"] = (base_x, start_y + (i * line_height))
-            draw_text_on_layer(img, line, font, line_cfg)
+        if lines:
+            start_y = base_y - ((len(lines) - 1) * line_height) / 2
+            
+            for i, line in enumerate(lines):
+                line_cfg = config.copy()
+                line_cfg["coord"] = (base_x, start_y + (i * line_height))
+                draw_text_on_layer(img, line, font, line_cfg)
     else:
         # Одна строка
         draw_text_on_layer(img, text, font, config)
@@ -490,6 +513,7 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         f_num = get_font_path(category, "num")
         
         if not f1:
+            print(f"❌ Не найден шрифт 1 для категории {category}")
             return None
         
         template_path = os.path.join(TEMPLATES_DIR, category, template_name)
@@ -508,8 +532,11 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
                     else:
                         curr_f = f1
                     
-                    font = ImageFont.truetype(curr_f, cfg["size"])
-                    process_field(img, text, font, cfg)
+                    try:
+                        font = ImageFont.truetype(curr_f, cfg["size"])
+                        process_field(img, text, font, cfg)
+                    except Exception as e:
+                        print(f"Ошибка загрузки шрифта {curr_f}: {e}")
             
             # SCODE строки
             if has_scode and scode_config and f3:
@@ -521,9 +548,13 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
                     if j == 1:
                         line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                     
-                    font = ImageFont.truetype(f3, line_cfg["size"])
-                    process_field(img, line, font, line_cfg)
+                    try:
+                        font = ImageFont.truetype(f3, line_cfg["size"])
+                        process_field(img, line, font, line_cfg)
+                    except Exception as e:
+                        print(f"Ошибка загрузки шрифта 3: {e}")
             
+            # Добавляем водяные знаки
             img_with_watermarks = add_watermarks(img)
             res = img_with_watermarks.convert("RGB")
             buf = BytesIO()
@@ -719,8 +750,11 @@ async def process_data(message: types.Message, state: FSMContext):
                         else:
                             curr_f = f1
                         
-                        font = ImageFont.truetype(curr_f, cfg["size"])
-                        process_field(img, text, font, cfg)
+                        try:
+                            font = ImageFont.truetype(curr_f, cfg["size"])
+                            process_field(img, text, font, cfg)
+                        except Exception as e:
+                            print(f"Ошибка загрузки шрифта: {e}")
                 
                 # SCODE строки
                 if has_scode and scode_config and f3:
@@ -732,9 +766,13 @@ async def process_data(message: types.Message, state: FSMContext):
                         if j == 1:
                             line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                         
-                        font = ImageFont.truetype(f3, line_cfg["size"])
-                        process_field(img, line, font, line_cfg)
+                        try:
+                            font = ImageFont.truetype(f3, line_cfg["size"])
+                            process_field(img, line, font, line_cfg)
+                        except Exception as e:
+                            print(f"Ошибка загрузки шрифта 3: {e}")
                 
+                # Сохраняем результат (БЕЗ водяных знаков!)
                 res = img.convert("RGB")
                 buf = BytesIO()
                 res.save(buf, format="JPEG", quality=95)
@@ -903,8 +941,11 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                             else:
                                 curr_f = f1
                             
-                            font = ImageFont.truetype(curr_f, cfg["size"])
-                            process_field(img, text, font, cfg)
+                            try:
+                                font = ImageFont.truetype(curr_f, cfg["size"])
+                                process_field(img, text, font, cfg)
+                            except Exception as e:
+                                print(f"Ошибка загрузки шрифта: {e}")
                     
                     # Если есть scode, генерируем и добавляем строки
                     if has_scode and scode_config and f3:
@@ -916,10 +957,13 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                             if j == 1:
                                 line_cfg["coord"] = (scode_config["coord"][0], scode_config["coord"][1] + line_height)
                             
-                            font = ImageFont.truetype(f3, line_cfg["size"])
-                            process_field(img, line, font, line_cfg)
+                            try:
+                                font = ImageFont.truetype(f3, line_cfg["size"])
+                                process_field(img, line, font, line_cfg)
+                            except Exception as e:
+                                print(f"Ошибка загрузки шрифта 3: {e}")
                     
-                    # Сохраняем результат
+                    # Сохраняем результат (БЕЗ водяных знаков!)
                     res = img.convert("RGB")
                     buf = BytesIO()
                     res.save(buf, format="JPEG", quality=95)
@@ -965,6 +1009,15 @@ async def cmd_stats(message: types.Message):
     await message.answer(stats_text, parse_mode="HTML")
 
 async def main():
+    # Проверяем наличие шрифтов при запуске
+    print("\n=== ПРОВЕРКА ШРИФТОВ ===")
+    categories = get_categories()
+    for cat in categories:
+        f1 = get_font_path(cat, "1")
+        f3 = get_font_path(cat, "3")
+        print(f"Категория {cat}: шрифт 1: {f1}, шрифт 3: {f3}")
+    print("=" * 50)
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
