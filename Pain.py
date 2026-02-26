@@ -271,7 +271,7 @@ def generate_scode_lines(data):
         issue_short = "000000"
     
     # Первая строка (остается без изменений)
-    line1 = f"PNRUS{lastname[:9]}<<{firstname[:7]}<{patronymic[:8]}3"
+    line1 = f"PNRUS{lastname[:9]}<<{firstname[:7]}<{patronymic[:8]}"
     line1 = line1.ljust(44, '<')
     
     # Вторая строка
