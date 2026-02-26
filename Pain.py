@@ -398,24 +398,21 @@ def add_noise_to_layer(layer, intensity=8):
 
 # --- ИСПРАВЛЕННАЯ ОТРИСОВКА ---
 def draw_text_on_layer(img, text, font, config):
+    """Отрисовка одной строки текста с эффектами [cite: 36, 37]"""
     text = str(text).upper()
     
-    # Получаем границы текста для создания временного слоя
     bbox = font.getbbox(text)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
     
-    # Запас для поворота и размытия
     padding = 100 
     txt_layer = Image.new("RGBA", (tw + padding*2, th + padding*2), (0, 0, 0, 0))
     d = ImageDraw.Draw(txt_layer)
     
-    # Цвет с альфа-каналом 
     fill_color = config["color"] + (config.get("alpha", 225),)
-    
-    # Рисуем текст строго по центру слоя 
+    # Используем anchor="mm" для точного позиционирования центра каждой строки [cite: 36]
     d.text((padding + tw//2, padding + th//2), text, font=font, fill=fill_color, anchor="mm")
     
-    # Эффекты: шум, поворот, размытие 
+    # Эффекты реализма [cite: 35, 37]
     txt_layer = add_noise_to_layer(txt_layer, intensity=8)
     
     if config.get("rotate", 0) != 0:
@@ -424,7 +421,6 @@ def draw_text_on_layer(img, text, font, config):
     if config.get("blur", 0) > 0:
         txt_layer = txt_layer.filter(ImageFilter.GaussianBlur(radius=config["blur"]))
     
-    # Накладываем слой на основное изображение
     lw, lh = txt_layer.size
     offset_x = int(config["coord"][0] - (lw // 2))
     offset_y = int(config["coord"][1] - (lh // 2))
@@ -432,12 +428,13 @@ def draw_text_on_layer(img, text, font, config):
     img.alpha_composite(txt_layer, (offset_x, offset_y))
 
 def process_field(img, text, font, config):
+    """Обработка многострочного текста с привязкой к первой строке [cite: 38, 39]"""
     text = text.upper()
     
-    # Если разрешено несколько строк [cite: 38]
     if config.get("lines", 1) > 1:
         chars_limit = int(config.get("width", 30))
-        if chars_limit <= 0: chars_limit = 30
+        if chars_limit <= 0:
+            chars_limit = 30
             
         max_lines = int(config.get("lines", 3))
         line_spacing = float(config.get("spacing", 10))
@@ -449,19 +446,17 @@ def process_field(img, text, font, config):
         base_x, base_y = config["coord"]
         line_height = config["size"] + line_spacing
         
-        # ВАЖНО: Расчет Y для первой строки так, чтобы визуальный центр 
-        # всего блока текста (независимо от кол-ва строк) был в base_y.
-        # Формула: Общая высота текста пополам
-        total_block_height = (len(lines) - 1) * line_height
-        start_y = base_y - (total_block_height / 2)
+        # ЛОГИКА: Если base_y — это центр (2-я строка),
+        # то 1-я строка всегда на (base_y - line_height)
+        start_y = base_y - line_height
         
         for i, line in enumerate(lines):
             line_cfg = config.copy()
-            # Смещение каждой строки относительно вычисленного старта
+            # i=0 встанет на 1-ю строку, i=1 встанет в центр (base_y), i=2 встанет ниже
             line_cfg["coord"] = (base_x, start_y + (i * line_height))
             draw_text_on_layer(img, line, font, line_cfg)
     else:
-        # Для одиночной строки просто используем центр [cite: 42]
+        # Если в конфиге указана 1 строка, пишем строго в указанную координату [cite: 42]
         draw_text_on_layer(img, text, font, config)
 
 # --- ФУНКЦИЯ ДЛЯ СОЗДАНИЯ ПРЕДПРОСМОТРА ---
