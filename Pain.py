@@ -199,10 +199,13 @@ def get_font_path(category, font_type="1"):
     
     return None
 
+# --- ИСПРАВЛЕННЫЙ ФОРМАТ СЕРИИ И НОМЕРА ---
 def format_passport_number(text):
+    """Форматирует серию и номер: 00  00  000000 (два пробела)"""
     clean = text.replace(" ", "")
     if len(clean) == 10 and clean.isdigit():
-        return f"{clean[:2]} {clean[2:4]} {clean[4:]}"
+        # Формат: первые 2 цифры, два пробела, следующие 2 цифры, два пробела, последние 6 цифр
+        return f"{clean[:2]}  {clean[2:4]}  {clean[4:]}"
     return text
 
 # --- ФУНКЦИЯ ДЛЯ ТРАНСЛИТЕРАЦИИ ---
@@ -403,7 +406,7 @@ def add_noise_to_layer(layer, intensity=8):
                 pass
     return layer
 
-# --- ИСПРАВЛЕННАЯ ОТРИСОВКА ---
+# --- ОТРИСОВКА ---
 def draw_text_on_layer(img, text, font, config):
     """Рисует текст на слое"""
     text = str(text).upper()
@@ -491,13 +494,14 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         with Image.open(template_path) as img:
             img = img.convert("RGBA")
             
-            # Основные поля
-            for i, cfg in enumerate(config):
+            # Основные поля (10 полей)
+            for i, cfg in enumerate(config[:10]):  # Берем только первые 10 полей
                 if i < len(random_data):
                     text = str(random_data[i])
                     
-                    # Определяем шрифт
+                    # Для 10-го поля (серия и номер) применяем форматирование
                     if i == 9:  # Серия и номер
+                        text = format_passport_number(text)
                         curr_f = f_num if f_num else f1
                     elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                         curr_f = f2
@@ -703,13 +707,14 @@ async def process_data(message: types.Message, state: FSMContext):
             with Image.open(template_path) as img:
                 img = img.convert("RGBA")
                 
-                # Основные поля
-                for i, cfg in enumerate(config):
+                # Основные поля (10 полей)
+                for i, cfg in enumerate(config[:10]):  # Берем только первые 10 полей
                     if i < len(lines):
                         text = str(lines[i])
                         
-                        # Определяем шрифт
+                        # Для 10-го поля (серия и номер) применяем форматирование
                         if i == 9:  # Серия и номер
+                            text = format_passport_number(text)
                             curr_f = f_num if f_num else f1
                         elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                             curr_f = f2
@@ -861,11 +866,13 @@ async def check_payment(call: types.CallbackQuery, state: FSMContext):
                 with Image.open(template_path) as img:
                     img = img.convert("RGBA")
                     
-                    for i, cfg in enumerate(config):
+                    # Основные поля (10 полей)
+                    for i, cfg in enumerate(config[:10]):
                         if i < len(data_lines):
                             text = str(data_lines[i])
                             
                             if i == 9:
+                                text = format_passport_number(text)
                                 curr_f = f_num if f_num else f1
                             elif f2 and re.fullmatch(r'[0-9.\-/ ]+', text):
                                 curr_f = f2
