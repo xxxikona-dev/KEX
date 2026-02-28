@@ -249,9 +249,9 @@ def generate_scode_lines(data):
     
     # Исправленная логика определения пола для SCODE
     raw_gender = data[5].strip().upper()
-    if raw_gender == 'М' or raw_gender == 'M':
+    if raw_gender == 'М' or raw_gender == 'MУЖ.':
         gender_code = 'M'
-    elif raw_gender == 'Ж' or raw_gender == 'F':
+    elif raw_gender == 'Ж' or raw_gender == 'ЖЕН.':
         gender_code = 'F'
     else:
         gender_code = '<' # Если пол не указан корректно
@@ -317,7 +317,7 @@ def generate_random_data():
         random.choice(patronymics)[:8],
         birth_date,
         random.choice(birth_places),
-        random.choice(["М", "Ж"]),
+        random.choice(["МУЖ.", "ЖЕН."]),
         random.choice(issued_by),
         issue_date,
         f"{random.randint(100, 999):03d}{random.randint(100, 999):03d}",
