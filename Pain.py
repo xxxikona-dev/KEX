@@ -35,7 +35,7 @@ CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
-DB_PATH = os.path.join(BASE_DIR, "payments.db")
+DB_PATH = os.path.join(BASE_DIR, "users.db")  # Изменено с payments.db на users.db для хранения пользователей
 
 # ID администраторов (бесплатное создание фото)
 ADMIN_IDS = [5153650495, 8225633174]
@@ -57,10 +57,21 @@ if CRYPTOBOT_TOKEN and CRYPTOPAY_AVAILABLE:
         print(f"❌ Ошибка инициализации CryptoBot: {e}")
         crypto = None
 
-# --- БАЗА ДАННЫХ ДЛЯ ПЛАТЕЖЕЙ ---
+# --- БАЗА ДАННЫХ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ И ПЛАТЕЖЕЙ ---
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    # Таблица пользователей
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            last_name TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    # Таблица платежей
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS payments (
             payment_id TEXT PRIMARY KEY,
@@ -76,6 +87,24 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+
+def add_user(user_id, username=None, first_name=None, last_name=None):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id, username, first_name, last_name) VALUES (?, ?, ?, ?)",
+        (user_id, username, first_name, last_name)
+    )
+    conn.commit()
+    conn.close()
+
+def get_all_users():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    return [user[0] for user in users]
 
 def create_payment_record(payment_id, user_id, invoice_id, category, template, user_data):
     conn = sqlite3.connect(DB_PATH)
@@ -117,6 +146,7 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
     waiting_payment = State()
+    waiting_post_message = State()  # Новое состояние для ожидания сообщения для рассылки
 
 # --- ФУНКЦИИ ЗАГРУЗКИ ---
 def get_categories():
@@ -515,11 +545,118 @@ async def create_preview_with_watermark(category, template_name, random_data, sc
         logging.error(f"Ошибка создания предпросмотра: {e}")
         return None
 
+# --- НОВЫЙ ХЕНДЛЕР ДЛЯ КОМАНДЫ /post ---
+@dp.message(Command("post"))
+async def cmd_post(message: types.Message, state: FSMContext):
+    """Команда для рассылки сообщения всем пользователям (только для админов)"""
+    user_id = message.from_user.id
+    
+    # Проверяем, является ли пользователь админом
+    if user_id not in ADMIN_IDS:
+        await message.answer("❌ У вас нет прав для этой команды")
+        return
+    
+    # Создаем клавиатуру с кнопкой отмены
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить рассылку", callback_data="cancel_post")]
+    ])
+    
+    await message.answer(
+        "📨 <b>Режим рассылки</b>\n\n"
+        "Отправьте сообщение, которое нужно разослать всем пользователям бота.\n"
+        "Можно отправлять текст, фото, видео или документы.",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+    
+    # Устанавливаем состояние ожидания сообщения для рассылки
+    await state.set_state(Form.waiting_post_message)
+
+@dp.callback_query(F.data == "cancel_post")
+async def cancel_post(call: types.CallbackQuery, state: FSMContext):
+    """Отмена рассылки"""
+    await state.clear()
+    await call.message.edit_text("✅ Рассылка отменена")
+    await call.answer()
+
+@dp.message(Form.waiting_post_message)
+async def process_post_message(message: types.Message, state: FSMContext):
+    """Обработка сообщения для рассылки"""
+    user_id = message.from_user.id
+    
+    # Дополнительная проверка на админа
+    if user_id not in ADMIN_IDS:
+        await state.clear()
+        return
+    
+    # Получаем всех пользователей
+    users = get_all_users()
+    
+    if not users:
+        await message.answer("❌ В базе нет пользователей для рассылки")
+        await state.clear()
+        return
+    
+    # Отправляем уведомление о начале рассылки
+    status_msg = await message.answer(f"🔄 Начинаю рассылку...\nВсего получателей: {len(users)}")
+    
+    # Счетчики для статистики
+    success = 0
+    failed = 0
+    
+    # Рассылаем сообщение всем пользователям
+    for i, target_user_id in enumerate(users):
+        try:
+            # Пропускаем самого админа (чтобы не дублировать)
+            if target_user_id == user_id:
+                continue
+                
+            # Копируем сообщение (сохраняя все медиа)
+            await message.copy_to(chat_id=target_user_id)
+            success += 1
+            
+            # Обновляем статус каждые 10 пользователей
+            if (i + 1) % 10 == 0:
+                await status_msg.edit_text(
+                    f"🔄 Рассылка в процессе...\n"
+                    f"Отправлено: {success}\n"
+                    f"Ошибок: {failed}\n"
+                    f"Осталось: {len(users) - i - 1}"
+                )
+                
+            # Небольшая задержка, чтобы не спамить
+            await asyncio.sleep(0.05)
+            
+        except Exception as e:
+            failed += 1
+            logging.error(f"Ошибка при отправке пользователю {target_user_id}: {e}")
+    
+    # Финальный отчет
+    await status_msg.edit_text(
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"📊 Статистика:\n"
+        f"• Успешно: {success}\n"
+        f"• Ошибок: {failed}\n"
+        f"• Всего получателей: {len(users)}",
+        parse_mode="HTML"
+    )
+    
+    await state.clear()
+
 # --- ХЕНДЛЕРЫ ---
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
+    
+    user_id = message.from_user.id
+    # Сохраняем пользователя в базу данных
+    add_user(
+        user_id=user_id,
+        username=message.from_user.username,
+        first_name=message.from_user.first_name,
+        last_name=message.from_user.last_name
+    )
     
     categories = get_categories()
     if not categories:
@@ -527,7 +664,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     kb = [[InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"cat_{cat}")] for cat in categories]
     
-    user_id = message.from_user.id
     if user_id in ADMIN_IDS:
         price_text = "🆓 Бесплатно (админ)"
     else:
@@ -929,6 +1065,9 @@ async def cmd_stats(message: types.Message):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
     cursor.execute("SELECT COUNT(*) FROM payments")
     total_payments = cursor.fetchone()[0]
     
@@ -937,7 +1076,8 @@ async def cmd_stats(message: types.Message):
     
     conn.close()
     
-    stats_text = f"📊 <b>Статистика платежей</b>\n\n"
+    stats_text = f"📊 <b>Статистика</b>\n\n"
+    stats_text += f"👥 Всего пользователей: {total_users}\n"
     stats_text += f"💰 Всего платежей: {total_payments}\n"
     stats_text += f"✅ Успешных: {completed_payments}"
     
