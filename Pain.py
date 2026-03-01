@@ -36,7 +36,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "users.db")
-LABEL_PATH = os.path.join(BASE_DIR, "label.jpg")  # Путь к файлу label.jpg
+LABEL_PATH = os.path.join(BASE_DIR, "Label.JPG")  # Путь к файлу label.jpg
 
 # ID администраторов (бесплатное создание фото)
 ADMIN_IDS = [5153650495, 8225633174]
