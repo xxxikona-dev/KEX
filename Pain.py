@@ -35,10 +35,13 @@ CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
-DB_PATH = os.path.join(BASE_DIR, "users.db")  # Изменено с payments.db на users.db для хранения пользователей
+DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 # ID администраторов (бесплатное создание фото)
 ADMIN_IDS = [5153650495, 8225633174]
+
+# Канал для проверки подписки (бот должен быть администратором)
+REQUIRED_CHANNEL = "@cdgshop"  # или "cdgshop" без @, но с @ удобнее
 
 # Цена одной генерации в USDT
 PRICE_PER_PHOTO = 1
@@ -56,6 +59,53 @@ if CRYPTOBOT_TOKEN and CRYPTOPAY_AVAILABLE:
     except Exception as e:
         print(f"❌ Ошибка инициализации CryptoBot: {e}")
         crypto = None
+
+# --- ФУНКЦИЯ ПРОВЕРКИ ПОДПИСКИ ---
+async def check_subscription(user_id: int) -> bool:
+    """
+    Проверяет, подписан ли пользователь на required_channel.
+    Возвращает True, если подписан, иначе False.
+    """
+    try:
+        # Пытаемся получить статус участника канала
+        member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
+        # Статусы, которые считаются подпиской
+        if member.status in ['member', 'administrator', 'creator']:
+            return True
+        else:
+            return False
+    except Exception as e:
+        # Если бот не может проверить (не админ, канал не найден и т.д.)
+        logging.error(f"Ошибка проверки подписки для {user_id}: {e}")
+        # В случае ошибки лучше пропустить пользователя, чтобы не блокировать всех
+        return True
+
+# --- ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ВСЕХ ID ПОЛЬЗОВАТЕЛЕЙ (ИЗ БД И ИСТОРИИ ПЛАТЕЖЕЙ) ---
+def get_all_user_ids():
+    """
+    Возвращает список уникальных ID пользователей из таблиц users и payments.
+    Это обеспечивает рассылку даже при удалении/очистке users.db.
+    """
+    user_ids = set()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Собираем ID из таблицы users
+    try:
+        cursor.execute("SELECT user_id FROM users")
+        user_ids.update(row[0] for row in cursor.fetchall())
+    except:
+        pass
+    
+    # Собираем ID из таблицы payments
+    try:
+        cursor.execute("SELECT DISTINCT user_id FROM payments")
+        user_ids.update(row[0] for row in cursor.fetchall())
+    except:
+        pass
+    
+    conn.close()
+    return list(user_ids)
 
 # --- БАЗА ДАННЫХ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ И ПЛАТЕЖЕЙ ---
 def init_db():
@@ -98,14 +148,6 @@ def add_user(user_id, username=None, first_name=None, last_name=None):
     conn.commit()
     conn.close()
 
-def get_all_users():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-    conn.close()
-    return [user[0] for user in users]
-
 def create_payment_record(payment_id, user_id, invoice_id, category, template, user_data):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -146,7 +188,7 @@ class Form(StatesGroup):
     browsing_templates = State()
     inputting_data = State()
     waiting_payment = State()
-    waiting_post_message = State()  # Новое состояние для ожидания сообщения для рассылки
+    waiting_post_message = State()
 
 # --- ФУНКЦИИ ЗАГРУЗКИ ---
 def get_categories():
@@ -589,8 +631,8 @@ async def process_post_message(message: types.Message, state: FSMContext):
         await state.clear()
         return
     
-    # Получаем всех пользователей
-    users = get_all_users()
+    # Получаем ВСЕХ пользователей (из обеих таблиц)
+    users = get_all_user_ids()
     
     if not users:
         await message.answer("❌ В базе нет пользователей для рассылки")
@@ -658,6 +700,30 @@ async def cmd_start(message: types.Message, state: FSMContext):
         last_name=message.from_user.last_name
     )
     
+    # ПРОВЕРКА ПОДПИСКИ
+    is_subscribed = await check_subscription(user_id)
+    
+    if not is_subscribed:
+        # Кнопка для подписки
+        channel_link = "https://t.me/cdgshop"  # Прямая ссылка на канал
+        if REQUIRED_CHANNEL.startswith('@'):
+            channel_link = f"https://t.me/{REQUIRED_CHANNEL[1:]}"
+        
+        subscribe_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 Подписаться на канал", url=channel_link)],
+            [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscription")]
+        ])
+        
+        await message.answer(
+            "⚠️ <b>Для использования бота необходимо подписаться на наш канал!</b>\n\n"
+            "Нажмите кнопку ниже, чтобы перейти в канал и подписаться.\n"
+            "После подписки нажмите 'Я подписался' для проверки.",
+            reply_markup=subscribe_kb,
+            parse_mode="HTML"
+        )
+        return  # Не даем пользователю пройти дальше без подписки
+    
+    # Если подписка есть или проверка не удалась, показываем обычное меню
     categories = get_categories()
     if not categories:
         return await message.answer("❌ Папка templates пуста!")
@@ -675,6 +741,37 @@ async def cmd_start(message: types.Message, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(Form.choosing_category)
+
+# Новый коллбэк для проверки подписки
+@dp.callback_query(F.data == "check_subscription")
+async def check_subscription_callback(call: types.CallbackQuery, state: FSMContext):
+    user_id = call.from_user.id
+    is_subscribed = await check_subscription(user_id)
+    
+    if is_subscribed:
+        await call.message.delete()
+        # Показываем меню
+        categories = get_categories()
+        if not categories:
+            await call.message.answer("❌ Папка templates пуста!")
+            return
+        
+        kb = [[InlineKeyboardButton(text=f"📁 {cat}", callback_data=f"cat_{cat}")] for cat in categories]
+        
+        if user_id in ADMIN_IDS:
+            price_text = "🆓 Бесплатно (админ)"
+        else:
+            price_text = f"💰 Стоимость: {PRICE_PER_PHOTO} USDT за фото"
+        
+        await call.message.answer(
+            f"<b>Выберите категорию документа:</b>\n\n{price_text}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            parse_mode="HTML"
+        )
+        await state.set_state(Form.choosing_category)
+        await call.answer("✅ Подписка подтверждена!")
+    else:
+        await call.answer("❌ Вы еще не подписались. Пожалуйста, подпишитесь на канал.", show_alert=True)
 
 @dp.callback_query(F.data.startswith("cat_"))
 async def choose_cat(call: types.CallbackQuery, state: FSMContext):
