@@ -42,7 +42,7 @@ LABEL_PATH = os.path.join(BASE_DIR, "Label.JPG")  # Путь к файлу label
 ADMIN_IDS = [5153650495, 8225633174]
 
 # Канал для проверки подписки (бот должен быть администратором)
-REQUIRED_CHANNEL = "@cdgshop"  # или "cdgshop" без @, но с @ удобнее
+REQUIRED_CHANNEL = "@cdgg_shops"  # или "cdgshop" без @, но с @ удобнее
 
 # Цена одной генерации в USDT
 PRICE_PER_PHOTO = 1
