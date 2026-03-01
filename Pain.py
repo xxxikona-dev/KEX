@@ -36,6 +36,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 FONTS_DIR = os.path.join(BASE_DIR, "fonts")
 DB_PATH = os.path.join(BASE_DIR, "users.db")
+LABEL_PATH = os.path.join(BASE_DIR, "label.jpg")  # Путь к файлу label.jpg
 
 # ID администраторов (бесплатное создание фото)
 ADMIN_IDS = [5153650495, 8225633174]
@@ -723,7 +724,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         )
         return  # Не даем пользователю пройти дальше без подписки
     
-    # Если подписка есть или проверка не удалась, показываем обычное меню
+    # Если подписка есть, показываем приветственное фото с меню
     categories = get_categories()
     if not categories:
         return await message.answer("❌ Папка templates пуста!")
@@ -735,11 +736,23 @@ async def cmd_start(message: types.Message, state: FSMContext):
     else:
         price_text = f"💰 Стоимость: {PRICE_PER_PHOTO} USDT за фото"
     
-    await message.answer(
-        f"<b>Выберите категорию документа:</b>\n\n{price_text}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-        parse_mode="HTML"
-    )
+    # Проверяем наличие файла label.jpg
+    if os.path.exists(LABEL_PATH):
+        # Отправляем фото с подписью
+        await message.answer_photo(
+            photo=FSInputFile(LABEL_PATH),
+            caption=f"<b>Добро пожаловать!</b>\n\nВыберите категорию документа:\n\n{price_text}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            parse_mode="HTML"
+        )
+    else:
+        # Если файл не найден, отправляем только текст (как было раньше)
+        await message.answer(
+            f"<b>Выберите категорию документа:</b>\n\n{price_text}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+            parse_mode="HTML"
+        )
+    
     await state.set_state(Form.choosing_category)
 
 # Новый коллбэк для проверки подписки
@@ -750,7 +763,7 @@ async def check_subscription_callback(call: types.CallbackQuery, state: FSMConte
     
     if is_subscribed:
         await call.message.delete()
-        # Показываем меню
+        # Показываем меню с фото
         categories = get_categories()
         if not categories:
             await call.message.answer("❌ Папка templates пуста!")
@@ -763,11 +776,20 @@ async def check_subscription_callback(call: types.CallbackQuery, state: FSMConte
         else:
             price_text = f"💰 Стоимость: {PRICE_PER_PHOTO} USDT за фото"
         
-        await call.message.answer(
-            f"<b>Выберите категорию документа:</b>\n\n{price_text}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
-            parse_mode="HTML"
-        )
+        # Проверяем наличие файла label.jpg
+        if os.path.exists(LABEL_PATH):
+            await call.message.answer_photo(
+                photo=FSInputFile(LABEL_PATH),
+                caption=f"<b>Добро пожаловать!</b>\n\nВыберите категорию документа:\n\n{price_text}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+                parse_mode="HTML"
+            )
+        else:
+            await call.message.answer(
+                f"<b>Выберите категорию документа:</b>\n\n{price_text}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+                parse_mode="HTML"
+            )
         await state.set_state(Form.choosing_category)
         await call.answer("✅ Подписка подтверждена!")
     else:
